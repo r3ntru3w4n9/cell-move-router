@@ -1,3 +1,7 @@
+use crate::components::{
+    Blockage, Cell, CellType, Conflict, ConflictType, Direction, Layer, MasterCell, MasterPin, Net,
+    Pair, Point, PrefixParse, Route,
+};
 use anyhow::Result;
 use std::{
     collections::{HashMap, HashSet},
@@ -28,147 +32,6 @@ mod utils {
     }
 }
 
-pub trait PrefixParse {
-    fn prefix() -> &'static str;
-    fn to_numeric(name: &str) -> usize {
-        // subtracted by one because of the offset
-        let length = Self::prefix().len();
-        name[length..].parse::<usize>().expect("Expect usize") - 1
-    }
-    fn to_string(id: usize) -> String {
-        // added by one because of the offset
-        format!("{}{}", Self::prefix(), id + 1)
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct Pair {
-    x: usize,
-    y: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum Direction {
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Debug)]
-pub struct Layer {
-    // layer id (starts from 0)
-    id: usize,
-    // horizontal or vertical
-    direction: Direction,
-    // dimensions
-    dim: Pair,
-    // all grids' capacity
-    capacity: Vec<usize>,
-}
-
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct MasterPin {
-    // id of the pin
-    id: usize,
-    // layer on which the pin is on
-    layer: usize,
-}
-
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct Blockage {
-    // id of the blockage
-    id: usize,
-    // layer on which the blockage is on
-    layer: usize,
-    // extra demand the blockage will cost
-    demand: usize,
-}
-
-#[derive(Debug)]
-pub struct MasterCell {
-    // id of cell
-    id: usize,
-    // number of pins
-    pins: HashSet<MasterPin>,
-    // number of blockages
-    blkgs: HashSet<Blockage>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum ConflictType {
-    AdjHGGrid,
-    SameGGrid,
-}
-
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct Conflict {
-    // adjHGGrid or sameGGrid
-    kind: ConflictType,
-    // other id
-    id: usize,
-    // on which layer
-    layer: usize,
-    // by how much
-    demand: usize,
-}
-
-#[derive(Debug)]
-pub enum CellType {
-    Movable,
-    Fixed,
-}
-
-#[derive(Debug)]
-pub struct Cell {
-    // if the cell can be moved
-    movable: CellType,
-    // position
-    position: Pair,
-    // mastercell type
-    pins: Vec<usize>,
-}
-
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Point {
-    row: usize,
-    col: usize,
-    lay: usize,
-}
-
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Route {
-    source: Point,
-    target: Point,
-}
-
-#[derive(Debug)]
-pub struct NetNode {
-    // corresponding to pin id
-    id: Option<usize>,
-    // positions
-    x: usize,
-    y: usize,
-    // nearby nodes
-    up: Option<usize>,
-    down: Option<usize>,
-    left: Option<usize>,
-    right: Option<usize>,
-}
-
-#[derive(Debug)]
-pub struct NetTree {
-    nodes: Vec<NetNode>,
-}
-
-#[derive(Debug)]
-pub struct Net {
-    // min layer id
-    min_layer: usize,
-    // the pin ids that are connected to the cell
-    pins: Vec<usize>,
-    // represented as a tree
-    tree: NetTree,
-}
-
 #[derive(Default, Debug)]
 pub struct Chip {
     // maximum movement count
@@ -185,65 +48,6 @@ pub struct Chip {
     nets: Vec<Net>,
     // all conflicts
     conflicts: HashMap<usize, HashSet<Conflict>>,
-}
-
-impl Pair {
-    pub fn size(&self) -> usize {
-        // x: rows, y: columns
-        self.x * self.y
-    }
-}
-
-impl Layer {
-    pub fn get_capacity(&self, row: usize, col: usize) -> Option<&usize> {
-        self.capacity.get(row * self.dim.y + col)
-    }
-
-    pub fn get_capacity_mut(&mut self, row: usize, col: usize) -> Option<&mut usize> {
-        self.capacity.get_mut(row * self.dim.y + col)
-    }
-}
-
-impl PrefixParse for Layer {
-    fn prefix() -> &'static str {
-        "M"
-    }
-}
-
-impl PrefixParse for MasterPin {
-    fn prefix() -> &'static str {
-        "P"
-    }
-}
-
-impl PrefixParse for Blockage {
-    fn prefix() -> &'static str {
-        "B"
-    }
-}
-
-impl PrefixParse for MasterCell {
-    fn prefix() -> &'static str {
-        "MC"
-    }
-}
-
-impl PrefixParse for Cell {
-    fn prefix() -> &'static str {
-        "C"
-    }
-}
-
-impl NetTree {
-    pub fn new() -> Self {
-        unimplemented!()
-    }
-}
-
-impl PrefixParse for Net {
-    fn prefix() -> &'static str {
-        "N"
-    }
 }
 
 impl Chip {
@@ -287,42 +91,40 @@ impl Chip {
         let num_layers: usize = parse_numeric(content);
 
         // Lay <layerName> <Idx> <RoutingDirection> <defaultSupplyOfOneGGrid>
-        self.layers = (0..num_layers)
-            .map(|idx| {
-                let keyword = parse_string(content);
-                assert_eq!(keyword, "Lay");
+        for idx in 0..num_layers {
+            let keyword = parse_string(content);
+            assert_eq!(keyword, "Lay");
 
-                let name = parse_string(content);
-                let layer_id: usize = parse_numeric(content);
-                let id: usize = Layer::to_numeric(name);
+            let name = parse_string(content);
+            let layer_id: usize = parse_numeric(content);
+            let id: usize = Layer::to_numeric(name);
 
-                debug_assert_eq!(layer_id, id + 1);
+            debug_assert_eq!(layer_id, id + 1);
 
-                let dir_str = parse_string(content);
-                let direction = if dir_str == "H" {
-                    Direction::Horizontal
-                } else {
-                    assert_eq!(dir_str, "V");
-                    Direction::Vertical
-                };
-                let supply: usize = parse_numeric(content);
+            let dir_str = parse_string(content);
+            let direction = if dir_str == "H" {
+                Direction::Horizontal
+            } else {
+                assert_eq!(dir_str, "V");
+                Direction::Vertical
+            };
+            let supply: usize = parse_numeric(content);
 
-                let grid_size = self.dim.size();
+            let grid_size = self.dim.size();
 
-                let capacity = vec![supply; grid_size];
+            let capacity = vec![supply; grid_size];
 
-                let dim = self.dim;
+            let dim = self.dim;
 
-                debug_assert_eq!(capacity.len(), grid_size);
+            debug_assert_eq!(capacity.len(), grid_size);
 
-                Layer {
-                    id: idx,
-                    direction,
-                    dim,
-                    capacity,
-                }
-            })
-            .collect();
+            self.layers.push(Layer {
+                id: idx,
+                direction,
+                dim,
+                capacity,
+            });
+        }
 
         debug_assert_eq!(self.layers.len(), num_layers);
 
@@ -357,64 +159,63 @@ impl Chip {
         let num_master_cell: usize = parse_numeric(content);
         // MasterCell <masterCellName> <pinCount> <blockageCount>
 
-        self.mastercells = (0..num_master_cell)
-            .map(|idx| {
+        for idx in 0..num_master_cell {
+            let keyword = parse_string(content);
+            assert_eq!(keyword, "MasterCell");
+
+            let name = parse_string(content);
+            assert_eq!(MasterCell::to_numeric(name), idx);
+
+            let num_pins: usize = parse_numeric(content);
+            let num_blkgs: usize = parse_numeric(content);
+
+            let mut pins = HashSet::with_capacity(num_pins);
+            // Pin <pinName> <pinLayer>
+            for _ in 0..num_pins {
                 let keyword = parse_string(content);
-                assert_eq!(keyword, "MasterCell");
+                assert_eq!(keyword, "Pin");
 
-                let name = parse_string(content);
-                assert_eq!(MasterCell::to_numeric(name), idx);
+                let pin_name = parse_string(content);
+                let pin_layer = parse_string(content);
 
-                let num_pins: usize = parse_numeric(content);
-                let num_blkgs: usize = parse_numeric(content);
+                let pin_id = MasterPin::to_numeric(pin_name);
+                let layer_id = Layer::to_numeric(pin_layer);
 
-                // Pin <pinName> <pinLayer>
-                let pins: HashSet<MasterPin> = (0..num_pins)
-                    .map(|_| {
-                        let keyword = parse_string(content);
-                        assert_eq!(keyword, "Pin");
+                let avail = pins.insert(MasterPin {
+                    id: pin_id,
+                    layer: layer_id,
+                });
+                debug_assert!(avail);
+            }
 
-                        let pin_name = parse_string(content);
-                        let pin_layer = parse_string(content);
+            let mut blkgs = HashSet::with_capacity(num_blkgs);
 
-                        let pin_id = MasterPin::to_numeric(pin_name);
-                        let layer_id = Layer::to_numeric(pin_layer);
+            // Blkg <blockageName> <blockageLayer> <demand>
+            for _ in 0..num_blkgs {
+                let keyword = parse_string(content);
+                assert_eq!(keyword, "Blkg");
 
-                        MasterPin {
-                            id: pin_id,
-                            layer: layer_id,
-                        }
-                    })
-                    .collect();
+                let blkg_name = parse_string(content);
+                let blkg_layer = parse_string(content);
+                let blkg_demand: usize = parse_numeric(content);
 
-                // Blkg <blockageName> <blockageLayer> <demand>
-                let blkgs: HashSet<Blockage> = (0..num_blkgs)
-                    .map(|_| {
-                        let keyword = parse_string(content);
-                        assert_eq!(keyword, "Blkg");
+                let layer_id = Layer::to_numeric(blkg_layer);
+                let blkg_id = Blockage::to_numeric(blkg_name);
 
-                        let blkg_name = parse_string(content);
-                        let blkg_layer = parse_string(content);
-                        let blkg_demand: usize = parse_numeric(content);
+                let avail = blkgs.insert(Blockage {
+                    id: blkg_id,
+                    layer: layer_id,
+                    demand: blkg_demand,
+                });
+                debug_assert!(avail);
+            }
 
-                        let layer_id = Layer::to_numeric(blkg_layer);
-                        let blkg_id = Blockage::to_numeric(blkg_name);
-
-                        Blockage {
-                            id: blkg_id,
-                            layer: layer_id,
-                            demand: blkg_demand,
-                        }
-                    })
-                    .collect();
-
-                MasterCell {
-                    id: idx,
-                    pins,
-                    blkgs,
-                }
+            self.mastercells.push(MasterCell {
+                id: idx,
+                pins,
+                blkgs,
             })
-            .collect();
+        }
 
         debug_assert_eq!(self.mastercells.len(), num_master_cell);
 
@@ -434,7 +235,7 @@ impl Chip {
             let adj_grid = if grid_type_str == "adjHGGrid" {
                 ConflictType::AdjHGGrid
             } else {
-                assert_eq!(grid_type_str, "sameGGrid");
+                debug_assert_eq!(grid_type_str, "sameGGrid");
                 ConflictType::SameGGrid
             };
 
@@ -487,101 +288,118 @@ impl Chip {
         assert_eq!(keyword, "NumCellInst");
         let cell_count: usize = parse_numeric(content);
 
+        let mut pin_cell = Vec::new();
+
         let mut pin_count = 0;
-
         // CellInst <instName> <masterCellName> <gGridRowIdx> <gGridColIdx> <movableCstr>
-        self.cells = (0..cell_count)
-            .map(|idx| {
-                let keyword = parse_string(content);
-                assert_eq!(keyword, "CellInst");
+        for idx in 0..cell_count {
+            let keyword = parse_string(content);
+            assert_eq!(keyword, "CellInst");
 
-                let cell_name = parse_string(content);
-                debug_assert_eq!(Cell::to_numeric(cell_name), idx);
+            let cell_name = parse_string(content);
+            debug_assert_eq!(Cell::to_numeric(cell_name), idx);
 
-                let master_cell_name = parse_string(content);
+            let master_cell_name = parse_string(content);
 
-                let mc_id = MasterCell::to_numeric(master_cell_name);
+            let mc_id = MasterCell::to_numeric(master_cell_name);
 
-                let row: usize = parse_numeric(content);
-                let col: usize = parse_numeric(content);
-                let position = Pair { x: row, y: col };
+            let row: usize = parse_numeric(content);
+            let col: usize = parse_numeric(content);
+            let position = Pair { x: row, y: col };
 
-                let move_str = parse_string(content);
-                let movable = if move_str == "Movable" {
-                    CellType::Movable
+            let move_str = parse_string(content);
+            let movable = if move_str == "Movable" {
+                CellType::Movable
+            } else {
+                debug_assert_eq!(move_str, "Fixed");
+                CellType::Fixed
+            };
+
+            let mc = self.mastercells.get(mc_id).expect("MasterCell not found");
+            let length = mc.pins.len();
+            let pins: Vec<usize> = (pin_count..pin_count + length).collect();
+            pin_count += length;
+
+            pin_cell.push(pin_count);
+
+            self.cells.push(Cell {
+                movable,
+                position,
+                pins,
+            });
+        }
+
+        let binary_search = |target: usize, mut low: usize, mut high: usize| -> usize {
+            loop {
+                debug_assert!(low <= high);
+
+                let middle = (low + high) / 2;
+                let value = *pin_cell.get(middle).expect("Index out of bounds");
+
+                if target <= value {
+                    high = middle;
                 } else {
-                    assert_eq!(move_str, "Fixed");
-                    CellType::Fixed
-                };
-
-                let mc = self.mastercells.get(mc_id).expect("MasterCell not found");
-
-                let length = mc.pins.len();
-
-                let pins: Vec<usize> = (pin_count..pin_count + length).collect();
-
-                pin_count += length;
-
-                Cell {
-                    movable,
-                    position,
-                    pins,
+                    debug_assert!(target > value);
+                    low = middle;
                 }
-            })
-            .collect();
+
+                if low == high {
+                    return high;
+                }
+            }
+        };
 
         // NumNets <netCount>
         let keyword = parse_string(content);
         assert_eq!(keyword, "NumNets");
         let net_count: usize = parse_numeric(content);
 
+        let mut layers_and_pins = Vec::new();
         // Net <netName> <numPins> <minRoutingLayConstraint>
-        let layers_and_pins: Vec<_> = (0..net_count)
-            .map(|idx| {
+        for idx in 0..net_count {
+            let keyword = parse_string(content);
+            assert_eq!(keyword, "Net");
+
+            let net_name = parse_string(content);
+            debug_assert_eq!(Net::to_numeric(net_name), idx);
+
+            let num_pins: usize = parse_numeric(content);
+            let layer = parse_string(content);
+
+            let min_layer = if (layer) == "NoCstr" {
+                0
+            } else {
+                Layer::to_numeric(layer)
+            };
+
+            let mut pins = Vec::new();
+            // Pin <instName>/<masterPinName>
+            for _ in 0..num_pins {
                 let keyword = parse_string(content);
-                assert_eq!(keyword, "Net");
+                assert_eq!(keyword, "Pin");
 
-                let net_name = parse_string(content);
-                debug_assert_eq!(Net::to_numeric(net_name), idx);
+                let next = parse_string(content);
+                let pin_info = &mut next.split('/');
+                let cell_name = parse_string(pin_info);
+                let pin_name = parse_string(pin_info);
+                debug_assert_eq!(pin_info.next(), None);
 
-                let num_pins: usize = parse_numeric(content);
-                let layer = parse_string(content);
+                let cell_id = Cell::to_numeric(cell_name);
+                let pin_id = MasterPin::to_numeric(pin_name);
 
-                let min_layer = if (layer) == "NoCstr" {
-                    0
-                } else {
-                    Layer::to_numeric(layer)
-                };
+                pins.push(
+                    *self
+                        .cells
+                        .get(cell_id)
+                        .expect("Cell not found")
+                        .pins
+                        .get(pin_id)
+                        .expect("Pin not found"),
+                );
+            }
 
-                // Pin <instName>/<masterPinName>
-                let pins: Vec<usize> = (0..num_pins)
-                    .map(|_| {
-                        let keyword = parse_string(content);
-                        assert_eq!(keyword, "Pin");
-
-                        let next = parse_string(content);
-                        let pin_info = &mut next.split('/');
-                        let cell_name = parse_string(pin_info);
-                        let pin_name = parse_string(pin_info);
-                        debug_assert_eq!(pin_info.next(), None);
-
-                        let cell_id = Cell::to_numeric(cell_name);
-                        let pin_id = MasterPin::to_numeric(pin_name);
-
-                        *self
-                            .cells
-                            .get(cell_id)
-                            .expect("Cell not found")
-                            .pins
-                            .get(pin_id)
-                            .expect("Pin not found")
-                    })
-                    .collect();
-
-                (min_layer, pins)
-            })
-            .collect();
-
+            layers_and_pins.push((min_layer, pins));
+        }
         // NumRoutes <routeSegmentCount>
         let keyword = parse_string(content);
         assert_eq!(keyword, "NumRoutes");
@@ -599,9 +417,6 @@ impl Chip {
             let elay: usize = parse_numeric(content);
             let net_name = parse_string(content);
             let net_id = Net::to_numeric(net_name);
-            let id = Net::to_numeric(net_name);
-
-            debug_assert_eq!(id + 1, net_id);
 
             let source = Point {
                 row: srow,
@@ -616,7 +431,7 @@ impl Chip {
 
             let route = Route { source, target };
             routes
-                .get_mut(id)
+                .get_mut(net_id)
                 .expect("Index out of bounds")
                 .insert(route);
         }
@@ -626,11 +441,7 @@ impl Chip {
         self.nets = layers_and_pins
             .into_iter()
             .zip(routes.into_iter())
-            .map(|((m_layer, conn_pins), segments)| Net {
-                min_layer: m_layer,
-                pins: conn_pins,
-                tree: NetTree::new(),
-            })
+            .map(|((m_layer, conn_pins), segments)| Net::new(m_layer, conn_pins, segments))
             .collect();
 
         // parse ends here
