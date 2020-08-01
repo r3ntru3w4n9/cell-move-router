@@ -3,6 +3,7 @@ use crate::components::{
     Pair, Point, PrefixParse, Route,
 };
 use anyhow::Result;
+use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
     fs,
@@ -340,13 +341,25 @@ impl Chip {
                     high = middle;
                 } else {
                     debug_assert!(target > value);
-                    low = middle;
+                    // avoids infinite loop since it's possible that low == middle
+                    if low == middle {
+                        low += 1;
+                    } else {
+                        low = middle;
+                    }
                 }
 
                 if low == high {
                     return high;
                 }
             }
+        };
+
+        let pin_position = |pin_id: usize| -> Pair {
+            let cells = &self.cells;
+            let idx = binary_search(pin_id, 0, cells.len());
+            let c = cells.get(idx).expect("Index out of bounds");
+            c.position
         };
 
         // NumNets <netCount>
@@ -366,7 +379,7 @@ impl Chip {
             let num_pins: usize = parse_numeric(content);
             let layer = parse_string(content);
 
-            let min_layer = if (layer) == "NoCstr" {
+            let min_layer = if layer == "NoCstr" {
                 0
             } else {
                 Layer::to_numeric(layer)
@@ -439,9 +452,11 @@ impl Chip {
         debug_assert_eq!(routes.len(), net_count);
 
         self.nets = layers_and_pins
-            .into_iter()
-            .zip(routes.into_iter())
-            .map(|((m_layer, conn_pins), segments)| Net::new(m_layer, conn_pins, segments))
+            .into_par_iter()
+            .zip(routes.into_par_iter())
+            .map(|((m_layer, conn_pins), segments)| {
+                Net::new(m_layer, conn_pins, segments, pin_position)
+            })
             .collect();
 
         // parse ends here

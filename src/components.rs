@@ -1,3 +1,4 @@
+use arrayvec::ArrayVec;
 use std::collections::{HashMap, HashSet};
 
 pub trait PrefixParse {
@@ -13,7 +14,7 @@ pub trait PrefixParse {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Pair {
     pub x: usize,
     pub y: usize,
@@ -37,7 +38,7 @@ pub struct Layer {
     pub capacity: Vec<usize>,
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MasterPin {
     // id of the pin
     pub id: usize,
@@ -45,7 +46,7 @@ pub struct MasterPin {
     pub layer: usize,
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Blockage {
     // id of the blockage
     pub id: usize,
@@ -99,25 +100,25 @@ pub struct Cell {
     pub pins: Vec<usize>,
 }
 
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Point {
     pub row: usize,
     pub col: usize,
     pub lay: usize,
 }
 
-#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Route {
     pub source: Point,
     pub target: Point,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub struct NetNode {
     // corresponding to pin id
     pub id: Option<usize>,
     // positions
-    pub positions: Pair,
+    pub position: Pair,
     // nearby nodes
     pub up: Option<usize>,
     pub down: Option<usize>,
@@ -185,15 +186,77 @@ impl PrefixParse for Cell {
     }
 }
 
+impl Point {
+    pub fn flatten(&self) -> Pair {
+        let Point { row, col, .. } = *self;
+        Pair { x: row, y: col }
+    }
+}
+
 impl NetTree {
-    pub fn new() -> Self {
-        unimplemented!()
+    pub fn new<F>(conn_pins: Vec<usize>, segments: HashSet<Route>, pin_position: F) -> Self
+    where
+        F: Fn(usize) -> Pair,
+    {
+        let conn_positions: HashMap<Pair, usize> = conn_pins
+            .into_iter()
+            .map(pin_position)
+            .enumerate()
+            .map(|(x, y)| (y, x))
+            .collect();
+
+        let end_points: HashSet<Pair> = segments
+            .iter()
+            .map(|route| [route.source, route.target])
+            .map(ArrayVec::from)
+            .map(ArrayVec::into_iter)
+            .flatten()
+            .map(|ref point| point.flatten())
+            .collect();
+
+        let nodes: Vec<NetNode> = end_points
+            .into_iter()
+            .map(|position| {
+                let id = if let Some(&idx) = conn_positions.get(&position) {
+                    Some(idx)
+                } else {
+                    None
+                };
+
+                NetNode {
+                    id,
+                    position,
+                    up: None,
+                    down: None,
+                    left: None,
+                    right: None,
+                }
+            })
+            .collect();
+
+        let position_to_idx: HashMap<Pair, usize> = nodes
+            .iter()
+            .enumerate()
+            .map(|(idx, node)| (node.position, idx))
+            .collect();
+
+        
+
+        Self { nodes }
     }
 }
 
 impl Net {
-    pub fn new(min_layer: usize, conn_pins: Vec<usize>, segments: HashSet<Route>) -> Self {
-        let tree = NetTree::new();
+    pub fn new<F>(
+        min_layer: usize,
+        conn_pins: Vec<usize>,
+        segments: HashSet<Route>,
+        pin_position: F,
+    ) -> Self
+    where
+        F: Fn(usize) -> Pair,
+    {
+        let tree = NetTree::new(conn_pins, segments, pin_position);
         Self { min_layer, tree }
     }
 }
