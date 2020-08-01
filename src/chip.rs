@@ -38,7 +38,7 @@ pub struct Chip {
     // maximum movement count
     max_move: usize,
     // dimensions
-    dim: Pair,
+    dim: Pair<usize>,
     // organized layers
     layers: Vec<Layer>,
     // organized mastercells
@@ -355,7 +355,7 @@ impl Chip {
             }
         };
 
-        let pin_position = |pin_id: usize| -> Pair {
+        let pin_position = |pin_id: usize| -> Pair<usize> {
             let cells = &self.cells;
             let idx = binary_search(pin_id, 0, cells.len());
             let c = cells.get(idx).expect("Index out of bounds");
