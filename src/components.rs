@@ -1,6 +1,11 @@
 use arrayvec::ArrayVec;
 use num::Num;
-use std::collections::{HashMap, HashSet};
+use std::{
+    cmp,
+    collections::{HashMap, HashSet},
+    string::ToString,
+    usize,
+};
 
 pub trait PrefixParse {
     fn prefix() -> &'static str;
@@ -133,6 +138,14 @@ pub enum Towards {
     Bottom,
 }
 
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Pointer {
+    // nearby node index
+    index: usize,
+    // nearby node height
+    height: usize,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct NetNode {
     // corresponding to pin id
@@ -140,10 +153,10 @@ pub struct NetNode {
     // positions
     pub position: Pair<usize>,
     // nearby nodes
-    pub up: Option<usize>,
-    pub down: Option<usize>,
-    pub left: Option<usize>,
-    pub right: Option<usize>,
+    pub up: Option<Pointer>,
+    pub down: Option<Pointer>,
+    pub left: Option<Pointer>,
+    pub right: Option<Pointer>,
 }
 
 #[derive(Debug)]
@@ -163,7 +176,7 @@ impl<T> Pair<T>
 where
     T: Copy + Num,
 {
-    pub fn size(&self) -> T {
+    pub fn size(self) -> T {
         // x: rows, y: columns
         self.x * self.y
     }
@@ -220,8 +233,8 @@ where
 }
 
 impl Route<usize> {
-    pub fn vector(&self) -> Point<isize> {
-        let Route { source, target } = *self;
+    pub fn vector(self) -> Point<isize> {
+        let Route { source, target } = self;
         Point {
             row: target.row as isize - source.row as isize,
             col: target.col as isize - source.col as isize,
@@ -229,7 +242,7 @@ impl Route<usize> {
         }
     }
 
-    pub fn towards(&self) -> Towards {
+    pub fn towards(self) -> Towards {
         match self.vector() {
             Point {
                 row: 0,
@@ -275,8 +288,8 @@ impl Route<usize> {
 }
 
 impl Towards {
-    pub fn inv(&self) -> Self {
-        match *self {
+    pub fn inv(self) -> Self {
+        match self {
             Towards::Up => Towards::Down,
             Towards::Down => Towards::Up,
             Towards::Left => Towards::Right,
@@ -284,6 +297,28 @@ impl Towards {
             Towards::Top => Towards::Bottom,
             Towards::Bottom => Towards::Top,
         }
+    }
+}
+
+impl NetNode {
+    pub fn neightbors(self) -> [Option<Pointer>; 4] {
+        [self.up, self.down, self.left, self.right]
+    }
+
+    pub fn span(self) -> Pair<usize> {
+        let (min, max) = self
+            .neightbors()
+            .iter()
+            .map(|opt| *opt)
+            .filter(Option::is_some)
+            .map(Option::unwrap)
+            .map(|ptr| ptr.height)
+            .fold((usize::MIN, usize::MAX), |(mut min, mut max), height| {
+                min = cmp::min(min, height);
+                max = cmp::max(max, height);
+                (min, max)
+            });
+        Pair { x: min, y: max }
     }
 }
 
@@ -301,7 +336,7 @@ impl NetTree {
 
         let end_points: HashSet<Pair<usize>> = segments
             .iter()
-            .map(|route| [route.source, route.target])
+            .map(|&Route { source, target }| [source, target])
             .map(ArrayVec::from)
             .map(ArrayVec::into_iter)
             .flatten()
@@ -336,8 +371,16 @@ impl NetTree {
 
         for route in segments.into_iter() {
             let towards = route.towards();
-
             let Route { source, target } = route;
+            let height = source.lay;
+            match towards {
+                Towards::Up | Towards::Down | Towards::Left | Towards::Right => {
+                    debug_assert_eq!(height, target.lay);
+                }
+                Towards::Top | Towards::Bottom => {
+                    debug_assert_ne!(height, target.lay);
+                }
+            }
 
             let source_pos = source.flatten();
             let target_pos = target.flatten();
@@ -349,31 +392,55 @@ impl NetTree {
                 .get(&target_pos)
                 .expect("Node does not exist");
 
-            let mut set_node = |self_index: usize, other_index, diff: Towards| {
-                let node = nodes.get_mut(self_index).expect("Node does not exist");
+            let mut set_node = |sindex: usize, oindex: usize, height: usize, diff: Towards| {
+                let node = nodes.get_mut(sindex).expect("Node does not exist");
 
                 match diff {
                     Towards::Up => {
-                        node.up = Some(other_index);
+                        node.up = Some(Pointer {
+                            index: oindex,
+                            height,
+                        });
                     }
                     Towards::Down => {
-                        node.down = Some(other_index);
+                        node.down = Some(Pointer {
+                            index: oindex,
+                            height,
+                        });
                     }
                     Towards::Left => {
-                        node.left = Some(other_index);
+                        node.left = Some(Pointer {
+                            index: oindex,
+                            height,
+                        });
                     }
                     Towards::Right => {
-                        node.right = Some(other_index);
+                        node.right = Some(Pointer {
+                            index: oindex,
+                            height,
+                        });
                     }
-                    Towards::Top | Towards::Bottom => {}
+                    Towards::Top | Towards::Bottom => {
+                        debug_assert_eq!(sindex, oindex);
+                    }
                 }
             };
 
-            set_node(source_idx, target_idx, towards);
-            set_node(target_idx, source_idx, towards.inv());
+            let mut set_both = |sindex: usize, oindex: usize, height: usize, diff: Towards| {
+                set_node(sindex, oindex, height, diff);
+                set_node(oindex, sindex, height, diff.inv());
+            };
+
+            set_both(source_idx, target_idx, height, towards);
         }
 
         Self { nodes }
+    }
+}
+
+impl ToString for NetTree {
+    fn to_string(&self) -> String {
+        unimplemented!()
     }
 }
 
@@ -389,6 +456,12 @@ impl Net {
     {
         let tree = NetTree::new(conn_pins, segments, pin_position);
         Self { min_layer, tree }
+    }
+}
+
+impl ToString for Net {
+    fn to_string(&self) -> String {
+        self.tree.to_string()
     }
 }
 

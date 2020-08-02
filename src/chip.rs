@@ -236,7 +236,7 @@ impl Chip {
             let adj_grid = if grid_type_str == "adjHGGrid" {
                 ConflictType::AdjHGGrid
             } else {
-                debug_assert_eq!(grid_type_str, "sameGGrid");
+                assert_eq!(grid_type_str, "sameGGrid");
                 ConflictType::SameGGrid
             };
 
@@ -312,7 +312,7 @@ impl Chip {
             let movable = if move_str == "Movable" {
                 CellType::Movable
             } else {
-                debug_assert_eq!(move_str, "Fixed");
+                assert_eq!(move_str, "Fixed");
                 CellType::Fixed
             };
 
@@ -367,7 +367,8 @@ impl Chip {
         assert_eq!(keyword, "NumNets");
         let net_count: usize = parse_numeric(content);
 
-        let mut layers_and_pins = Vec::new();
+        let mut net_layers = Vec::with_capacity(net_count);
+        let mut net_pins = Vec::with_capacity(net_count);
         // Net <netName> <numPins> <minRoutingLayConstraint>
         for idx in 0..net_count {
             let keyword = parse_string(content);
@@ -385,7 +386,7 @@ impl Chip {
                 Layer::to_numeric(layer)
             };
 
-            let mut pins = Vec::new();
+            let mut pins = Vec::with_capacity(num_pins);
             // Pin <instName>/<masterPinName>
             for _ in 0..num_pins {
                 let keyword = parse_string(content);
@@ -411,7 +412,8 @@ impl Chip {
                 );
             }
 
-            layers_and_pins.push((min_layer, pins));
+            net_layers.push(min_layer);
+            net_pins.push(pins);
         }
         // NumRoutes <routeSegmentCount>
         let keyword = parse_string(content);
@@ -451,10 +453,9 @@ impl Chip {
 
         debug_assert_eq!(routes.len(), net_count);
 
-        self.nets = layers_and_pins
+        self.nets = (net_layers, net_pins, routes)
             .into_par_iter()
-            .zip(routes.into_par_iter())
-            .map(|((m_layer, conn_pins), segments)| {
+            .map(|(m_layer, conn_pins, segments)| {
                 Net::new(m_layer, conn_pins, segments, pin_position)
             })
             .collect();
