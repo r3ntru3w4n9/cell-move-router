@@ -6,6 +6,7 @@ use anyhow::Result;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
+    fmt::{Display, Formatter, Result as FmtResult},
     fs,
 };
 
@@ -471,5 +472,11 @@ impl Chip {
 
     pub fn get_layer_mut(&mut self, idx: usize) -> Option<&mut Layer> {
         self.layers.get_mut(idx)
+    }
+}
+
+impl Display for Chip {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        unimplemented!()
     }
 }

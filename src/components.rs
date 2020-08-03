@@ -3,7 +3,7 @@ use num::Num;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
-    string::ToString,
+    fmt::{Display, Formatter, Result as FmtResult},
     usize,
 };
 
@@ -232,6 +232,15 @@ where
     }
 }
 
+impl<T> Display for Point<T>
+where
+    T: Copy + Display + Num,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{} {} {}", self.row, self.col, self.lay)
+    }
+}
+
 impl Route<usize> {
     pub fn vector(self) -> Point<isize> {
         let Route { source, target } = self;
@@ -287,6 +296,15 @@ impl Route<usize> {
     }
 }
 
+impl<T> Display for Route<T>
+where
+    T: Copy + Display + Num,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{} {}", self.source, self.target)
+    }
+}
+
 impl Towards {
     pub fn inv(self) -> Self {
         match self {
@@ -306,19 +324,20 @@ impl NetNode {
     }
 
     pub fn span(self) -> Pair<usize> {
-        let (min, max) = self
-            .neightbors()
+        self.neightbors()
             .iter()
-            .map(|opt| *opt)
-            .filter(Option::is_some)
-            .map(Option::unwrap)
+            .filter_map(|opt| *opt)
             .map(|ptr| ptr.height)
-            .fold((usize::MIN, usize::MAX), |(mut min, mut max), height| {
-                min = cmp::min(min, height);
-                max = cmp::max(max, height);
-                (min, max)
-            });
-        Pair { x: min, y: max }
+            .fold(
+                Pair {
+                    x: usize::MAX,
+                    y: usize::MIN,
+                },
+                |Pair { x: min, y: max }, height| Pair {
+                    x: cmp::min(min, height),
+                    y: cmp::max(max, height),
+                },
+            )
     }
 }
 
@@ -394,35 +413,17 @@ impl NetTree {
 
             let mut set_node = |sindex: usize, oindex: usize, height: usize, diff: Towards| {
                 let node = nodes.get_mut(sindex).expect("Node does not exist");
+                let some_ptr = Some(Pointer {
+                    index: oindex,
+                    height,
+                });
 
                 match diff {
-                    Towards::Up => {
-                        node.up = Some(Pointer {
-                            index: oindex,
-                            height,
-                        });
-                    }
-                    Towards::Down => {
-                        node.down = Some(Pointer {
-                            index: oindex,
-                            height,
-                        });
-                    }
-                    Towards::Left => {
-                        node.left = Some(Pointer {
-                            index: oindex,
-                            height,
-                        });
-                    }
-                    Towards::Right => {
-                        node.right = Some(Pointer {
-                            index: oindex,
-                            height,
-                        });
-                    }
-                    Towards::Top | Towards::Bottom => {
-                        debug_assert_eq!(sindex, oindex);
-                    }
+                    Towards::Up => node.up = some_ptr,
+                    Towards::Down => node.down = some_ptr,
+                    Towards::Left => node.left = some_ptr,
+                    Towards::Right => node.right = some_ptr,
+                    Towards::Top | Towards::Bottom => debug_assert_eq!(sindex, oindex),
                 }
             };
 
@@ -438,8 +439,8 @@ impl NetTree {
     }
 }
 
-impl ToString for NetTree {
-    fn to_string(&self) -> String {
+impl Display for NetTree {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
         unimplemented!()
     }
 }
