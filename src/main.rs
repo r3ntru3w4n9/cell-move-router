@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use cell_move_router::{Args, Chip};
 use structopt::StructOpt;
 
@@ -7,14 +7,11 @@ fn main() -> Result<()> {
 
     let mut chip = Chip::default();
 
-    let read_result = match args.infile {
-        Some(infile) => chip.read_file(&infile),
-        None => panic!("No input file specified"),
-    };
+    let infile = &args.infile.ok_or(anyhow!("Input file not specified"))?;
+    let outfile = &args.outfile.ok_or(anyhow!("Output file not specified"))?;
 
-    if let Err(e) = read_result {
-        return Err(e);
-    }
+    chip.read_file(infile)?;
+    chip.write_file(outfile)?;
 
     Ok(())
 }

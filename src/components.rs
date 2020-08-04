@@ -1,22 +1,31 @@
+use anyhow::{Error, Result};
 use arrayvec::ArrayVec;
 use num::Num;
 use std::{
     cmp,
     collections::{HashMap, HashSet},
-    fmt::{Display, Formatter, Result as FmtResult},
+    fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
+    str::FromStr,
     usize,
 };
 
-pub trait PrefixParse {
+pub trait FactoryID {
     fn prefix() -> &'static str;
-    fn to_numeric(name: &str) -> usize {
+    fn from_str(name: &str) -> Result<usize>
+    where
+        Error: From<<usize as FromStr>::Err>,
+    {
         // subtracted by one because of the offset
         let length = Self::prefix().len();
-        name[length..].parse::<usize>().expect("Expect usize") - 1
+
+        Ok(name[length..]
+            .parse::<usize>()
+            .or_else(|err| Err(Error::from(err)))?
+            - 1)
     }
-    fn to_string(id: usize) -> String {
+    fn from_numeric(id: usize) -> Result<String> {
         // added by one because of the offset
-        format!("{}{}", Self::prefix(), id + 1)
+        Ok(format!("{}{}", Self::prefix(), id + 1))
     }
 }
 
@@ -101,6 +110,8 @@ pub enum CellType {
 
 #[derive(Debug)]
 pub struct Cell {
+    // id of the cell
+    pub id: usize,
     // if the cell can be moved
     pub movable: CellType,
     // position
@@ -166,6 +177,8 @@ pub struct NetTree {
 
 #[derive(Debug)]
 pub struct Net {
+    // id of the net
+    pub id: usize,
     // min layer id
     pub min_layer: usize,
     // represented as a tree
@@ -180,6 +193,14 @@ where
         // x: rows, y: columns
         self.x * self.y
     }
+
+    pub fn with(self, height: T) -> Point<T> {
+        Point {
+            row: self.x,
+            col: self.y,
+            lay: height,
+        }
+    }
 }
 
 impl Layer {
@@ -192,31 +213,31 @@ impl Layer {
     }
 }
 
-impl PrefixParse for Layer {
+impl FactoryID for Layer {
     fn prefix() -> &'static str {
         "M"
     }
 }
 
-impl PrefixParse for MasterPin {
+impl FactoryID for MasterPin {
     fn prefix() -> &'static str {
         "P"
     }
 }
 
-impl PrefixParse for Blockage {
+impl FactoryID for Blockage {
     fn prefix() -> &'static str {
         "B"
     }
 }
 
-impl PrefixParse for MasterCell {
+impl FactoryID for MasterCell {
     fn prefix() -> &'static str {
         "MC"
     }
 }
 
-impl PrefixParse for Cell {
+impl FactoryID for Cell {
     fn prefix() -> &'static str {
         "C"
     }
@@ -323,32 +344,38 @@ impl NetNode {
         [self.up, self.down, self.left, self.right]
     }
 
-    pub fn span(self) -> Pair<usize> {
+    pub fn span(self) -> (usize, usize) {
         self.neightbors()
             .iter()
             .filter_map(|opt| *opt)
             .map(|ptr| ptr.height)
-            .fold(
-                Pair {
-                    x: usize::MAX,
-                    y: usize::MIN,
-                },
-                |Pair { x: min, y: max }, height| Pair {
-                    x: cmp::min(min, height),
-                    y: cmp::max(max, height),
-                },
-            )
+            .fold((usize::MAX, usize::MIN), |(min, max), height| {
+                (cmp::min(min, height), cmp::max(max, height))
+            })
+    }
+
+    pub fn index(self, towards: Towards) -> Option<Pointer> {
+        match towards {
+            Towards::Up => self.up,
+            Towards::Down => self.down,
+            Towards::Left => self.left,
+            Towards::Right => self.right,
+            Towards::Top | Towards::Bottom => unreachable!(),
+        }
     }
 }
 
 impl NetTree {
     pub fn new<F>(conn_pins: Vec<usize>, segments: HashSet<Route<usize>>, pin_position: F) -> Self
     where
-        F: Fn(usize) -> Pair<usize>,
+        F: Fn(usize) -> Result<Pair<usize>>,
     {
+        // TODO break cycles
+
         let conn_positions: HashMap<Pair<usize>, usize> = conn_pins
             .into_iter()
             .map(pin_position)
+            .map(Result::unwrap)
             .enumerate()
             .map(|(x, y)| (y, x))
             .collect();
@@ -439,34 +466,83 @@ impl NetTree {
     }
 }
 
-impl Display for NetTree {
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        unimplemented!()
-    }
-}
-
 impl Net {
     pub fn new<F>(
+        id: usize,
         min_layer: usize,
         conn_pins: Vec<usize>,
         segments: HashSet<Route<usize>>,
         pin_position: F,
     ) -> Self
     where
-        F: Fn(usize) -> Pair<usize>,
+        F: Fn(usize) -> Result<Pair<usize>>,
     {
         let tree = NetTree::new(conn_pins, segments, pin_position);
-        Self { min_layer, tree }
+        Self {
+            id,
+            min_layer,
+            tree,
+        }
+    }
+
+    fn fmt_recursive(
+        &self,
+        f: &mut Formatter,
+        node: NetNode,
+        list: &[NetNode],
+        name: &str,
+        direction: Towards,
+    ) -> FmtResult {
+        let directions =
+            ArrayVec::from([Towards::Up, Towards::Down, Towards::Left, Towards::Right]);
+
+        for dir in directions.into_iter() {
+            if dir == direction.inv() {
+                continue;
+            }
+            let Pointer { index, height } = match node.index(dir) {
+                Some(idx) => idx,
+                None => continue,
+            };
+            let nearby_node = *list.get(index).ok_or(FmtError)?;
+
+            let source = node.position.with(height);
+            let target = nearby_node.position.with(height);
+
+            write!(f, "{} {}\n", Route { source, target }, name)?;
+
+            self.fmt_recursive(f, nearby_node, list, name, dir)?;
+        }
+
+        Ok(())
     }
 }
 
-impl ToString for Net {
-    fn to_string(&self) -> String {
-        self.tree.to_string()
+impl Display for Net {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        let name = &Self::from_numeric(self.id).or_else(|_| Err(FmtError))?;
+
+        for node in self.tree.nodes.iter() {
+            let Pair { x: row, y: col } = node.position;
+            let (min, max) = node.span();
+            write!(f, "{} {} {} ", row, col, min)?;
+            write!(f, "{} {} {} ", row, col, max)?;
+            write!(f, "{}\n", name)?;
+        }
+
+        let directions =
+            ArrayVec::from([Towards::Up, Towards::Down, Towards::Left, Towards::Right]);
+        if let Some(&root) = self.tree.nodes.first() {
+            for dir in directions.into_iter() {
+                self.fmt_recursive(f, root, &self.tree.nodes, name, dir)?;
+            }
+        }
+
+        Ok(())
     }
 }
 
-impl PrefixParse for Net {
+impl FactoryID for Net {
     fn prefix() -> &'static str {
         "N"
     }
