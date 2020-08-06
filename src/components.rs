@@ -1,3 +1,4 @@
+use crate::utilities::UnionFind;
 use anyhow::{Error, Result};
 use arrayvec::ArrayVec;
 use num::Num;
@@ -9,8 +10,18 @@ use std::{
     usize,
 };
 
+/// FactoryID provides three methods.
+/// Users only need to implement `prefix`
+/// which is a `&'static str` and unique to the type.
+/// `from_str` generates an instance's id,
+/// `from_numeric` generates an instance's name.
+/// Both are automatically implemented provided that `prefix` is implemented.
 pub trait FactoryID {
+    /// The prefix a type has in input file.
+    /// The name of an instance is uniquely determined by its prefix and id
     fn prefix() -> &'static str;
+
+    /// Converts from &str to usize.
     fn from_str(name: &str) -> Result<usize>
     where
         Error: From<<usize as FromStr>::Err>,
@@ -18,127 +29,38 @@ pub trait FactoryID {
         // subtracted by one because of the offset
         let length = Self::prefix().len();
 
-        Ok(name[length..]
-            .parse::<usize>()
-            .or_else(|err| Err(Error::from(err)))?
-            - 1)
+        Ok(name[length..].parse::<usize>().map_err(Error::from)? - 1)
     }
+
+    /// Converts from usize to String.
     fn from_numeric(id: usize) -> Result<String> {
         // added by one because of the offset
         Ok(format!("{}{}", Self::prefix(), id + 1))
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Pair<T>
-where
-    T: Num,
-{
-    pub x: T,
-    pub y: T,
-}
-
+/// Directions of a layer
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Direction {
     Horizontal,
     Vertical,
 }
 
-#[derive(Debug)]
-pub struct Layer {
-    // layer id (starts from 0)
-    pub id: usize,
-    // horizontal or vertical
-    pub direction: Direction,
-    // dimensions
-    pub dim: Pair<usize>,
-    // all grids' capacity
-    pub capacity: Vec<usize>,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct MasterPin {
-    // id of the pin
-    pub id: usize,
-    // layer on which the pin is on
-    pub layer: usize,
-}
-
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub struct Blockage {
-    // id of the blockage
-    pub id: usize,
-    // layer on which the blockage is on
-    pub layer: usize,
-    // extra demand the blockage will cost
-    pub demand: usize,
-}
-
-#[derive(Debug)]
-pub struct MasterCell {
-    // id of cell
-    pub id: usize,
-    // number of pins
-    pub pins: HashSet<MasterPin>,
-    // number of blockages
-    pub blkgs: HashSet<Blockage>,
-}
-
+/// There are different conflict types
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ConflictType {
     AdjHGGrid,
     SameGGrid,
 }
 
-#[derive(Debug, Eq, Hash, PartialEq)]
-pub struct Conflict {
-    // adjHGGrid or sameGGrid
-    pub kind: ConflictType,
-    // other id
-    pub id: usize,
-    // on which layer
-    pub layer: usize,
-    // by how much
-    pub demand: usize,
-}
-
+/// Whether a cell is movable
 #[derive(Debug)]
 pub enum CellType {
     Movable,
     Fixed,
 }
 
-#[derive(Debug)]
-pub struct Cell {
-    // id of the cell
-    pub id: usize,
-    // if the cell can be moved
-    pub movable: CellType,
-    // position
-    pub position: Pair<usize>,
-    // mastercell type
-    pub pins: Vec<usize>,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Point<T>
-where
-    T: Num,
-{
-    pub row: T,
-    pub col: T,
-    pub lay: T,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
-pub struct Route<T>
-where
-    T: Num,
-{
-    pub source: Point<T>,
-    pub target: Point<T>,
-}
-
+/// Towards a direction
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum Towards {
     Up,
@@ -149,39 +71,137 @@ pub enum Towards {
     Bottom,
 }
 
+/// A 2-dimension tuple representing a Pair.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct Pair<T>(pub T, pub T)
+where
+    T: Copy + Num;
+
+/// A 3-dimension tuple representing a Point.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct Point<T>(pub T, pub T, pub T)
+where
+    T: Copy + Num;
+
+/// A source point and a target point representing a Route.
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
+pub struct Route<T>(pub Point<T>, pub Point<T>)
+where
+    T: Copy + Num;
+
+/// Some information about a Layer.
+#[derive(Debug)]
+pub struct Layer {
+    /// layer id (starts from 0)
+    pub id: usize,
+    /// horizontal or vertical
+    pub direction: Direction,
+    /// dimensions
+    pub dim: Pair<usize>,
+    /// all grids' capacity
+    pub capacity: Vec<usize>,
+}
+
+/// Some information about a MasterPin.
+
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct MasterPin {
+    /// id of the pin
+    pub id: usize,
+    /// layer on which the pin is on
+    pub layer: usize,
+}
+
+/// Some information about a Blockage.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
+pub struct Blockage {
+    /// id of the blockage
+    pub id: usize,
+    /// layer on which the blockage is on
+    pub layer: usize,
+    /// extra demand the blockage will cost
+    pub demand: usize,
+}
+
+/// Some information about a MasterCell.
+#[derive(Debug)]
+pub struct MasterCell {
+    /// id of cell
+    pub id: usize,
+    /// number of pins
+    pub pins: HashSet<MasterPin>,
+    /// number of blockages
+    pub blkgs: HashSet<Blockage>,
+}
+
+/// Some information about a Conflict,
+/// which happens when certain types of MasterCells are too close for confort.
+#[derive(Debug, Eq, Hash, PartialEq)]
+pub struct Conflict {
+    /// adjHGGrid or sameGGrid
+    pub kind: ConflictType,
+    /// other id
+    pub id: usize,
+    /// on which layer
+    pub layer: usize,
+    /// by how much
+    pub demand: usize,
+}
+
+/// Some information about a Cell
+#[derive(Debug)]
+pub struct Cell {
+    /// id of the cell
+    pub id: usize,
+    /// if the cell can be moved
+    pub movable: CellType,
+    /// position
+    pub position: Pair<usize>,
+    /// mastercell type
+    pub pins: Vec<usize>,
+}
+
+/// Pointer points to the nearby node.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Pointer {
-    // nearby node index
+    /// nearby node index
     index: usize,
-    // nearby node height
+    /// nearby node height
     height: usize,
 }
 
+/// A node in a tree.
 #[derive(Clone, Copy, Debug)]
 pub struct NetNode {
-    // corresponding to pin id
+    /// corresponding to pin id, None represents a virtual node.
     pub id: Option<usize>,
-    // positions
+    /// positions
     pub position: Pair<usize>,
-    // nearby nodes
+    /// nearby nodes
     pub up: Option<Pointer>,
+    /// nearby nodes
     pub down: Option<Pointer>,
+    /// nearby nodes
     pub left: Option<Pointer>,
+    /// nearby nodes
     pub right: Option<Pointer>,
 }
 
+/// Net represented as a tree.
 #[derive(Debug)]
 pub struct NetTree {
+    /// All nodes in a tree
     nodes: Vec<NetNode>,
 }
 
+/// Some information about a Net.
 #[derive(Debug)]
 pub struct Net {
-    // id of the net
+    /// id of the net
     pub id: usize,
-    // min layer id
+    /// min layer id
     pub min_layer: usize,
-    // represented as a tree
+    /// Structure of the net represented as a tree
     pub tree: NetTree,
 }
 
@@ -189,27 +209,67 @@ impl<T> Pair<T>
 where
     T: Copy + Num,
 {
-    pub fn size(self) -> T {
-        // x: rows, y: columns
-        self.x * self.y
+    pub fn x(&self) -> T {
+        self.0
     }
 
-    pub fn with(self, height: T) -> Point<T> {
-        Point {
-            row: self.x,
-            col: self.y,
-            lay: height,
-        }
+    pub fn y(&self) -> T {
+        self.1
+    }
+
+    pub fn size(&self) -> T {
+        // x: rows, y: columns
+        self.x() * self.y()
+    }
+
+    pub fn with(self, lay: T) -> Point<T> {
+        let Pair(row, col) = self;
+        Point(row, col, lay)
+    }
+}
+
+impl<T> Point<T>
+where
+    T: Copy + Num,
+{
+    pub fn row(&self) -> T {
+        self.0
+    }
+
+    pub fn col(&self) -> T {
+        self.1
+    }
+
+    pub fn lay(&self) -> T {
+        self.2
+    }
+
+    pub fn flatten(&self) -> Pair<T> {
+        let &Point(row, col, _) = self;
+        Pair(row, col)
+    }
+}
+
+impl<T> Route<T>
+where
+    T: Copy + Num,
+{
+    pub fn source(&self) -> Point<T> {
+        self.0
+    }
+
+    pub fn target(&self) -> Point<T> {
+        self.1
     }
 }
 
 impl Layer {
     pub fn get_capacity(&self, row: usize, col: usize) -> Option<&usize> {
-        self.capacity.get(row * self.dim.y + col)
+        self.capacity.get(row * self.dim.y() + col)
     }
 
     pub fn get_capacity_mut(&mut self, row: usize, col: usize) -> Option<&mut usize> {
-        self.capacity.get_mut(row * self.dim.y + col)
+        self.capacity.get_mut(row * self.dim.y() + col)
     }
 }
 
@@ -243,69 +303,43 @@ impl FactoryID for Cell {
     }
 }
 
-impl<T> Point<T>
-where
-    T: Num,
-{
-    pub fn flatten(self) -> Pair<T> {
-        let Point { row, col, .. } = self;
-        Pair { x: row, y: col }
-    }
-}
-
 impl<T> Display for Point<T>
 where
     T: Copy + Display + Num,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{} {} {}", self.row, self.col, self.lay)
+        write!(f, "{} {} {}", self.row(), self.col(), self.lay())
     }
 }
 
 impl Route<usize> {
-    pub fn vector(self) -> Point<isize> {
-        let Route { source, target } = self;
-        Point {
-            row: target.row as isize - source.row as isize,
-            col: target.col as isize - source.col as isize,
-            lay: target.lay as isize - source.lay as isize,
-        }
+    fn vector(&self) -> Point<isize> {
+        let Route(source, target) = self;
+        Point(
+            target.row() as isize - source.row() as isize,
+            target.col() as isize - source.col() as isize,
+            target.lay() as isize - source.lay() as isize,
+        )
     }
 
-    pub fn towards(self) -> Towards {
+    pub fn towards(&self) -> Towards {
         match self.vector() {
-            Point {
-                row: 0,
-                col: 0,
-                lay: 0,
-            } => unreachable!(),
-            Point {
-                row,
-                col: 0,
-                lay: 0,
-            } => {
+            Point(0, 0, 0) => unreachable!(),
+            Point(row, 0, 0) => {
                 if row > 0 {
                     Towards::Up
                 } else {
                     Towards::Down
                 }
             }
-            Point {
-                row: 0,
-                col,
-                lay: 0,
-            } => {
+            Point(0, col, 0) => {
                 if col > 0 {
                     Towards::Right
                 } else {
                     Towards::Left
                 }
             }
-            Point {
-                row: 0,
-                col: 0,
-                lay,
-            } => {
+            Point(0, 0, lay) => {
                 if lay > 0 {
                     Towards::Top
                 } else {
@@ -322,12 +356,12 @@ where
     T: Copy + Display + Num,
 {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        write!(f, "{} {}", self.source, self.target)
+        write!(f, "{} {}", self.source(), self.target())
     }
 }
 
 impl Towards {
-    pub fn inv(self) -> Self {
+    pub fn inv(&self) -> Self {
         match self {
             Towards::Up => Towards::Down,
             Towards::Down => Towards::Up,
@@ -340,11 +374,11 @@ impl Towards {
 }
 
 impl NetNode {
-    pub fn neightbors(self) -> [Option<Pointer>; 4] {
+    pub fn neightbors(&self) -> [Option<Pointer>; 4] {
         [self.up, self.down, self.left, self.right]
     }
 
-    pub fn span(self) -> (usize, usize) {
+    pub fn span(&self) -> (usize, usize) {
         self.neightbors()
             .iter()
             .filter_map(|opt| *opt)
@@ -368,46 +402,40 @@ impl NetNode {
 impl NetTree {
     pub fn new<F>(conn_pins: Vec<usize>, segments: HashSet<Route<usize>>, pin_position: F) -> Self
     where
-        F: Fn(usize) -> Result<Pair<usize>>,
+        F: Fn(usize) -> Option<Pair<usize>>,
     {
-        // TODO break cycles
-
-        let conn_positions: HashMap<Pair<usize>, usize> = conn_pins
-            .into_iter()
-            .map(pin_position)
-            .map(Result::unwrap)
-            .enumerate()
-            .map(|(x, y)| (y, x))
-            .collect();
-
-        let end_points: HashSet<Pair<usize>> = segments
+        // Using handcrafted `fold` first instead of direct using `collect` here
+        // to bypass implementation details of `collect`
+        let mut nodes: Vec<NetNode> = segments
             .iter()
-            .map(|&Route { source, target }| [source, target])
+            .map(|&Route(source, target)| [source, target])
             .map(ArrayVec::from)
             .map(ArrayVec::into_iter)
             .flatten()
-            .map(Point::flatten)
-            .collect();
-
-        let mut nodes: Vec<NetNode> = end_points
+            .map(|ref pt| pt.flatten())
+            .map(|pin| (pin, None))
+            .chain(conn_pins.into_iter().map(|idx| {
+                (
+                    pin_position(idx).expect("Pin not found in database"),
+                    Some(idx),
+                )
+            }))
+            .fold(HashMap::new(), |mut hmap, (position, idx)| {
+                *hmap.entry(position).or_insert(Option::default()) = idx;
+                hmap
+            })
             .into_iter()
-            .map(|position| {
-                let id = if let Some(&idx) = conn_positions.get(&position) {
-                    Some(idx)
-                } else {
-                    None
-                };
-
-                NetNode {
-                    id,
-                    position,
-                    up: None,
-                    down: None,
-                    left: None,
-                    right: None,
-                }
+            .map(|(position, id)| NetNode {
+                id,
+                position,
+                up: None,
+                down: None,
+                left: None,
+                right: None,
             })
             .collect();
+
+        let num_nodes = nodes.len();
 
         let position_to_idx: HashMap<Pair<usize>, usize> = nodes
             .iter()
@@ -415,17 +443,33 @@ impl NetTree {
             .map(|(idx, node)| (node.position, idx))
             .collect();
 
-        for route in segments.into_iter() {
+        debug_assert_eq!(
+            nodes
+                .iter()
+                .map(|node| { node.position })
+                .collect::<HashSet<_>>()
+                .len(),
+            num_nodes
+        );
+
+        debug_assert_eq!(position_to_idx.len(), num_nodes);
+
+        let mut union_find = UnionFind::new(num_nodes);
+
+        let mut uf_cnt = 0;
+
+        for route in segments.into_iter().filter(|elem| match elem.towards() {
+            Towards::Up | Towards::Down | Towards::Left | Towards::Right => true,
+            Towards::Top | Towards::Bottom => false,
+        }) {
             let towards = route.towards();
-            let Route { source, target } = route;
-            let height = source.lay;
+            let Route(source, target) = route;
+
+            let height = source.lay();
+            debug_assert_eq!(height, target.lay());
             match towards {
-                Towards::Up | Towards::Down | Towards::Left | Towards::Right => {
-                    debug_assert_eq!(height, target.lay);
-                }
-                Towards::Top | Towards::Bottom => {
-                    debug_assert_ne!(height, target.lay);
-                }
+                Towards::Up | Towards::Down | Towards::Left | Towards::Right => (),
+                Towards::Top | Towards::Bottom => unreachable!(),
             }
 
             let source_pos = source.flatten();
@@ -433,36 +477,48 @@ impl NetTree {
 
             let source_idx = *position_to_idx
                 .get(&source_pos)
-                .expect("Node does not exist");
+                .expect("Index out of bounds");
             let target_idx = *position_to_idx
                 .get(&target_pos)
-                .expect("Node does not exist");
+                .expect("Index out of bounds");
 
-            let mut set_node = |sindex: usize, oindex: usize, height: usize, diff: Towards| {
-                let node = nodes.get_mut(sindex).expect("Node does not exist");
-                let some_ptr = Some(Pointer {
-                    index: oindex,
-                    height,
-                });
+            if !union_find.union(source_idx, target_idx) {
+                debug_assert_eq!(uf_cnt, 0);
+                uf_cnt += 1;
+                continue;
+            }
 
-                match diff {
-                    Towards::Up => node.up = some_ptr,
-                    Towards::Down => node.down = some_ptr,
-                    Towards::Left => node.left = some_ptr,
-                    Towards::Right => node.right = some_ptr,
-                    Towards::Top | Towards::Bottom => debug_assert_eq!(sindex, oindex),
-                }
-            };
-
-            let mut set_both = |sindex: usize, oindex: usize, height: usize, diff: Towards| {
-                set_node(sindex, oindex, height, diff);
-                set_node(oindex, sindex, height, diff.inv());
-            };
-
-            set_both(source_idx, target_idx, height, towards);
+            Self::connect(&mut nodes, source_idx, target_idx, height, towards);
         }
 
+        debug_assert!(union_find.done());
+        debug_assert_eq!(uf_cnt, 1);
+
         Self { nodes }
+    }
+
+    /// Connects two different nodes.
+    fn connect(nodes: &mut [NetNode], sindex: usize, oindex: usize, height: usize, diff: Towards) {
+        let mut set_node = |sindex: usize, oindex: usize, diff: Towards| {
+            let node: &mut NetNode = nodes.get_mut(sindex).expect("Node does not exist");
+            let some_ptr = Some(Pointer {
+                index: oindex,
+                height,
+            });
+
+            match diff {
+                Towards::Up => node.up = some_ptr,
+                Towards::Down => node.down = some_ptr,
+                Towards::Left => node.left = some_ptr,
+                Towards::Right => node.right = some_ptr,
+                Towards::Top | Towards::Bottom => unreachable!(),
+            }
+        };
+
+        debug_assert_ne!(sindex, oindex);
+
+        set_node(sindex, oindex, diff);
+        set_node(oindex, sindex, diff.inv());
     }
 }
 
@@ -475,7 +531,7 @@ impl Net {
         pin_position: F,
     ) -> Self
     where
-        F: Fn(usize) -> Result<Pair<usize>>,
+        F: Fn(usize) -> Option<Pair<usize>>,
     {
         let tree = NetTree::new(conn_pins, segments, pin_position);
         Self {
@@ -504,12 +560,12 @@ impl Net {
                 Some(idx) => idx,
                 None => continue,
             };
-            let nearby_node = *list.get(index).ok_or(FmtError)?;
+            let nearby_node = *list.get(index).expect("Index out of bounds");
 
             let source = node.position.with(height);
             let target = nearby_node.position.with(height);
 
-            write!(f, "{} {}\n", Route { source, target }, name)?;
+            write!(f, "{} {}\n", Route(source, target), name)?;
 
             self.fmt_recursive(f, nearby_node, list, name, dir)?;
         }
@@ -520,10 +576,10 @@ impl Net {
 
 impl Display for Net {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        let name = &Self::from_numeric(self.id).or_else(|_| Err(FmtError))?;
+        let name = &Self::from_numeric(self.id).map_err(|_| FmtError)?;
 
         for node in self.tree.nodes.iter() {
-            let Pair { x: row, y: col } = node.position;
+            let Pair(row, col) = node.position;
             let (min, max) = node.span();
             write!(f, "{} {} {} ", row, col, min)?;
             write!(f, "{} {} {} ", row, col, max)?;

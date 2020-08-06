@@ -2,53 +2,82 @@ use crate::components::{
     Blockage, Cell, CellType, Conflict, ConflictType, Direction, FactoryID, Layer, MasterCell,
     MasterPin, Net, Pair, Point, Route,
 };
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use rayon::prelude::*;
 use std::{
     collections::{HashMap, HashSet},
-    fmt::{Display, Formatter, Result as FmtResult},
+    fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
     fs,
 };
 
 mod utils {
     use anyhow::{anyhow, Error, Result};
     use num::Num;
-    use std::str::FromStr;
+    use std::{cmp::PartialEq, fmt::Debug, str::FromStr};
 
-    pub fn parse_string<'a, T>(iter: &mut T) -> Result<&'a str>
+    #[derive(Debug)]
+    pub(super) struct InputError;
+
+    #[derive(Debug)]
+    pub(super) struct NameError;
+
+    impl From<InputError> for Error {
+        fn from(err: InputError) -> Self {
+            anyhow!(format!("Error: {:?}", err))
+        }
+    }
+
+    impl From<NameError> for Error {
+        fn from(err: NameError) -> Self {
+            anyhow!(format!("Error: {:?}", err))
+        }
+    }
+
+    /// Parse a `&str` from an iterator
+    pub(super) fn parse_string<'a, T>(iter: &mut T) -> Result<&'a str>
     where
         T: Iterator<Item = &'a str>,
     {
-        iter.next().ok_or(anyhow!("Iterator is empty"))
+        iter.next().ok_or(Error::from(InputError))
     }
 
-    pub fn parse_numeric<'a, T, U>(iter: &mut T) -> Result<U>
+    /// Parse a numeric value (usize, isize...) from an iterator
+    pub(super) fn parse_numeric<'a, T, U>(iter: &mut T) -> Result<U>
     where
         T: Iterator<Item = &'a str>,
         U: FromStr + Num,
         Error: From<<U as FromStr>::Err>,
     {
-        parse_string(iter)?
-            .parse()
-            .or_else(|err| Err(Error::from(err)))
+        parse_string(iter)?.parse().map_err(Error::from)
+    }
+
+    pub(super) fn check_eq<T, U>(mine: T, input: U) -> Result<()>
+    where
+        T: PartialEq<U>,
+    {
+        if mine == input {
+            Ok(())
+        } else {
+            Err(Error::from(NameError))
+        }
     }
 }
 
 #[derive(Default, Debug)]
 pub struct Chip {
-    // maximum movement count
+    /// maximum movement count
     max_move: usize,
-    // dimensions
+    /// dimensions
     dim: Pair<usize>,
-    // organized layers
+    /// organized layers
     layers: Vec<Layer>,
-    // organized mastercells
+    /// organized mastercells
     mastercells: Vec<MasterCell>,
-    // all cells
+    /// all cells
     cells: Vec<Cell>,
-    // all nets
+    /// all nets
     nets: Vec<Net>,
-    // all conflicts
+    /// all conflicts
     conflicts: HashMap<usize, HashSet<Conflict>>,
 }
 
@@ -61,19 +90,19 @@ impl Chip {
 
         // MaxCellMove <maxMoveCount>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "MaxCellMove");
+        check_eq(keyword, "MaxCellMove")?;
         let max_move: usize = parse_numeric(content)?;
         self.max_move = max_move;
 
         // GGridBoundaryIdx <rowBeginIdx> <colBeginIdx> <rowEndIdx> <colEndIdx>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "GGridBoundaryIdx");
+        check_eq(keyword, "GGridBoundaryIdx")?;
 
         let row_beg: usize = parse_numeric(content)?;
         let col_beg: usize = parse_numeric(content)?;
 
-        debug_assert_eq!(row_beg, 1);
-        debug_assert_eq!(col_beg, 1);
+        check_eq(row_beg, 1)?;
+        check_eq(col_beg, 1)?;
 
         let row_end: usize = parse_numeric(content)?;
         let col_end: usize = parse_numeric(content)?;
@@ -81,44 +110,37 @@ impl Chip {
         let num_rows = row_end;
         let num_cols = col_end;
 
-        self.dim = Pair {
-            x: num_rows,
-            y: num_cols,
-        };
+        self.dim = Pair(num_rows, num_cols);
 
         // NumLayer <LayerCount>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "NumLayer");
+        check_eq(keyword, "NumLayer")?;
 
         let num_layers: usize = parse_numeric(content)?;
 
         // Lay <layerName> <Idx> <RoutingDirection> <defaultSupplyOfOneGGrid>
         for idx in 0..num_layers {
             let keyword = parse_string(content)?;
-            assert_eq!(keyword, "Lay");
+            check_eq(keyword, "Lay")?;
 
             let name = parse_string(content)?;
             let layer_id: usize = parse_numeric(content)?;
             let id: usize = Layer::from_str(name)?;
 
-            debug_assert_eq!(layer_id, id + 1);
+            check_eq(layer_id, id + 1)?;
 
             let dir_str = parse_string(content)?;
             let direction = if dir_str == "H" {
                 Direction::Horizontal
             } else {
-                assert_eq!(dir_str, "V");
+                check_eq(dir_str, "V")?;
                 Direction::Vertical
             };
+
             let supply: usize = parse_numeric(content)?;
-
             let grid_size = self.dim.size();
-
             let capacity = vec![supply; grid_size];
-
             let dim = self.dim;
-
-            debug_assert_eq!(capacity.len(), grid_size);
 
             self.layers.push(Layer {
                 id: idx,
@@ -128,11 +150,9 @@ impl Chip {
             });
         }
 
-        debug_assert_eq!(self.layers.len(), num_layers);
-
         // NumNonDefaultSupplyGGrid <nonDefaultSupplyGGridCount>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "NumNonDefaultSupplyGGrid");
+        check_eq(keyword, "NumNonDefaultSupplyGGrid")?;
         let num_non_default: usize = parse_numeric(content)?;
         for _ in 0..num_non_default {
             // <rowIdx> <colIdx> <LayIdx> <incrOrDecrValue>
@@ -150,23 +170,23 @@ impl Chip {
 
             let cell_capacity = layer_mut
                 .get_capacity_mut(r, c)
-                .ok_or(anyhow!("Cell index out of bounds"))?;
+                .expect("Cell index out of bounds");
 
             *cell_capacity = (*cell_capacity as isize + val) as usize;
         }
 
         // NumMasterCell <masterCellCount>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "NumMasterCell");
+        check_eq(keyword, "NumMasterCell")?;
         let num_master_cell: usize = parse_numeric(content)?;
         // MasterCell <masterCellName> <pinCount> <blockageCount>
 
         for idx in 0..num_master_cell {
             let keyword = parse_string(content)?;
-            assert_eq!(keyword, "MasterCell");
+            check_eq(keyword, "MasterCell")?;
 
             let name = parse_string(content)?;
-            assert_eq!(MasterCell::from_str(name)?, idx);
+            check_eq(MasterCell::from_str(name)?, idx)?;
 
             let num_pins: usize = parse_numeric(content)?;
             let num_blkgs: usize = parse_numeric(content)?;
@@ -175,7 +195,7 @@ impl Chip {
             // Pin <pinName> <pinLayer>
             for _ in 0..num_pins {
                 let keyword = parse_string(content)?;
-                assert_eq!(keyword, "Pin");
+                check_eq(keyword, "Pin")?;
 
                 let pin_name = parse_string(content)?;
                 let pin_layer = parse_string(content)?;
@@ -187,6 +207,7 @@ impl Chip {
                     id: pin_id,
                     layer: layer_id,
                 });
+
                 debug_assert!(avail);
             }
 
@@ -195,7 +216,7 @@ impl Chip {
             // Blkg <blockageName> <blockageLayer> <demand>
             for _ in 0..num_blkgs {
                 let keyword = parse_string(content)?;
-                assert_eq!(keyword, "Blkg");
+                check_eq(keyword, "Blkg")?;
 
                 let blkg_name = parse_string(content)?;
                 let blkg_layer = parse_string(content)?;
@@ -209,6 +230,7 @@ impl Chip {
                     layer: layer_id,
                     demand: blkg_demand,
                 });
+
                 debug_assert!(avail);
             }
 
@@ -218,8 +240,6 @@ impl Chip {
                 blkgs,
             })
         }
-
-        debug_assert_eq!(self.mastercells.len(), num_master_cell);
 
         // NumNeighborCellExtraDemand <count>
         let keyword = parse_string(content)?;
@@ -283,11 +303,12 @@ impl Chip {
             .map(|(_, set)| set)
             .map(HashSet::len)
             .sum();
+
         debug_assert_eq!(num_elements + is_same, 2 * extra_count);
 
         // NumCellInst <cellInstCount>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "NumCellInst");
+        check_eq(keyword, "NumCellInst")?;
         let cell_count: usize = parse_numeric(content)?;
 
         let mut pin_cell = Vec::new();
@@ -296,11 +317,11 @@ impl Chip {
         // CellInst <instName> <masterCellName> <gGridRowIdx> <gGridColIdx> <movableCstr>
         for idx in 0..cell_count {
             let keyword = parse_string(content)?;
-            assert_eq!(keyword, "CellInst");
+            check_eq(keyword, "CellInst")?;
 
             let cell_name = parse_string(content)?;
             let id = Cell::from_str(cell_name)?;
-            debug_assert_eq!(id, idx);
+            check_eq(id, idx)?;
 
             let master_cell_name = parse_string(content)?;
 
@@ -308,20 +329,17 @@ impl Chip {
 
             let row: usize = parse_numeric(content)?;
             let col: usize = parse_numeric(content)?;
-            let position = Pair { x: row, y: col };
+            let position = Pair(row, col);
 
             let move_str = parse_string(content)?;
             let movable = if move_str == "Movable" {
                 CellType::Movable
             } else {
-                assert_eq!(move_str, "Fixed");
+                check_eq(move_str, "Fixed")?;
                 CellType::Fixed
             };
 
-            let mc = self
-                .mastercells
-                .get(mc_id)
-                .ok_or(anyhow!("MasterCell not found"))?;
+            let mc = self.mastercells.get(mc_id).expect("MasterCell not found");
             let length = mc.pins.len();
             let pins: Vec<usize> = (pin_count..pin_count + length).collect();
             pin_count += length;
@@ -336,12 +354,12 @@ impl Chip {
             });
         }
 
-        let binary_search = |target: usize, mut low: usize, mut high: usize| -> Result<usize> {
+        let binary_search = |target: usize, mut low: usize, mut high: usize| -> Option<usize> {
             loop {
                 debug_assert!(low <= high);
 
                 let middle = (low + high) / 2;
-                let value = *pin_cell.get(middle).ok_or(anyhow!("Index out of bounds"))?;
+                let value = *pin_cell.get(middle)?;
 
                 if target <= value {
                     high = middle;
@@ -356,24 +374,21 @@ impl Chip {
                 }
 
                 if low == high {
-                    return Ok(high);
+                    return Some(high);
                 }
             }
         };
 
-        let pin_position = |pin_id: usize| -> Result<Pair<usize>> {
+        let pin_position = |pin_id: usize| -> Option<Pair<usize>> {
             let cells = &self.cells;
             let idx = binary_search(pin_id, 0, cells.len())?;
-            let position = cells
-                .get(idx)
-                .ok_or(anyhow!("Index out of bounds"))?
-                .position;
-            Ok(position)
+            let position = cells.get(idx)?.position;
+            Some(position)
         };
 
         // NumNets <netCount>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "NumNets");
+        check_eq(keyword, "NumNets")?;
         let net_count: usize = parse_numeric(content)?;
 
         let mut net_layers = Vec::with_capacity(net_count);
@@ -381,10 +396,10 @@ impl Chip {
         // Net <netName> <numPins> <minRoutingLayConstraint>
         for idx in 0..net_count {
             let keyword = parse_string(content)?;
-            assert_eq!(keyword, "Net");
+            check_eq(keyword, "Net")?;
 
             let net_name = parse_string(content)?;
-            debug_assert_eq!(Net::from_str(net_name)?, idx);
+            check_eq(Net::from_str(net_name)?, idx)?;
 
             let num_pins: usize = parse_numeric(content)?;
             let layer = parse_string(content)?;
@@ -399,13 +414,13 @@ impl Chip {
             // Pin <instName>/<masterPinName>
             for _ in 0..num_pins {
                 let keyword = parse_string(content)?;
-                assert_eq!(keyword, "Pin");
+                check_eq(keyword, "Pin")?;
 
                 let next = parse_string(content)?;
                 let pin_info = &mut next.split('/');
                 let cell_name = parse_string(pin_info)?;
                 let pin_name = parse_string(pin_info)?;
-                debug_assert_eq!(pin_info.next(), None);
+                check_eq(pin_info.next(), None)?;
 
                 let cell_id = Cell::from_str(cell_name)?;
                 let pin_id = MasterPin::from_str(pin_name)?;
@@ -414,10 +429,10 @@ impl Chip {
                     *self
                         .cells
                         .get(cell_id)
-                        .ok_or(anyhow!("Cell not found"))?
+                        .expect("Cell not found")
                         .pins
                         .get(pin_id)
-                        .ok_or(anyhow!("Pin not found"))?,
+                        .expect("Pin not found"),
                 );
             }
 
@@ -426,7 +441,7 @@ impl Chip {
         }
         // NumRoutes <routeSegmentCount>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "NumRoutes");
+        check_eq(keyword, "NumRoutes")?;
         let num_segments: usize = parse_numeric(content)?;
 
         let mut routes = vec![HashSet::new(); net_count];
@@ -442,25 +457,17 @@ impl Chip {
             let net_name = parse_string(content)?;
             let net_id = Net::from_str(net_name)?;
 
-            let source = Point {
-                row: srow,
-                col: scol,
-                lay: slay,
-            };
-            let target = Point {
-                row: erow,
-                col: ecol,
-                lay: elay,
-            };
+            let source = Point(srow, scol, slay);
+            let target = Point(erow, ecol, elay);
 
-            let route = Route { source, target };
+            let route = Route(source, target);
             routes
                 .get_mut(net_id)
-                .ok_or(anyhow!("Index out of bounds"))?
+                .expect("Index out of bounds")
                 .insert(route);
         }
 
-        debug_assert_eq!(routes.len(), net_count);
+        check_eq(routes.len(), net_count)?;
 
         self.nets = (0..net_count, net_layers, net_pins, routes)
             .into_par_iter()
@@ -470,7 +477,7 @@ impl Chip {
             .collect();
 
         // parse ends here
-        debug_assert_eq!(content.next(), None);
+        check_eq(content.next(), None)?;
         Ok(())
     }
 
@@ -491,10 +498,19 @@ impl Chip {
 
 impl Display for Chip {
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        for net in self.nets.iter() {
-            write!(f, "{}", net)?;
-        }
+        let accumulate = |mut acc: String, s: String| {
+            acc.push_str(&s);
+            acc
+        };
 
-        Ok(())
+        let names: String = self
+            .nets
+            .par_iter()
+            .map(ToString::to_string)
+            .fold_with(String::new(), accumulate)
+            .reduce_with(accumulate)
+            .ok_or(FmtError)?;
+
+        write!(f, "{}", names)
     }
 }
