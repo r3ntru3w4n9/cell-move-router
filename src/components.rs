@@ -6,6 +6,7 @@ use std::{
     cmp,
     collections::{HashMap, HashSet},
     fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
+    iter, mem,
     str::FromStr,
     usize,
 };
@@ -222,8 +223,8 @@ where
         self.x() * self.y()
     }
 
-    pub fn with(self, lay: T) -> Point<T> {
-        let Pair(row, col) = self;
+    pub fn with(&self, lay: T) -> Point<T> {
+        let &Pair(row, col) = self;
         Point(row, col, lay)
     }
 }
@@ -388,7 +389,7 @@ impl NetNode {
             })
     }
 
-    pub fn index(self, towards: Towards) -> Option<Pointer> {
+    pub fn index(&self, towards: Towards) -> Option<Pointer> {
         match towards {
             Towards::Up => self.up,
             Towards::Down => self.down,
@@ -400,32 +401,17 @@ impl NetNode {
 }
 
 impl NetTree {
+    /// Creates a new Tree.
     pub fn new<F>(conn_pins: Vec<usize>, segments: HashSet<Route<usize>>, pin_position: F) -> Self
     where
         F: Fn(usize) -> Option<Pair<usize>>,
     {
         // Using handcrafted `fold` first instead of direct using `collect` here
         // to bypass implementation details of `collect`
-        let mut nodes: Vec<NetNode> = segments
+        let pos = Self::positions(&conn_pins, &segments, pin_position);
+        let mut nodes: Vec<_> = pos
             .iter()
-            .map(|&Route(source, target)| [source, target])
-            .map(ArrayVec::from)
-            .map(ArrayVec::into_iter)
-            .flatten()
-            .map(|ref pt| pt.flatten())
-            .map(|pin| (pin, None))
-            .chain(conn_pins.into_iter().map(|idx| {
-                (
-                    pin_position(idx).expect("Pin not found in database"),
-                    Some(idx),
-                )
-            }))
-            .fold(HashMap::new(), |mut hmap, (position, idx)| {
-                *hmap.entry(position).or_insert(Option::default()) = idx;
-                hmap
-            })
-            .into_iter()
-            .map(|(position, id)| NetNode {
+            .map(|(&position, &id)| NetNode {
                 id,
                 position,
                 up: None,
@@ -437,31 +423,23 @@ impl NetTree {
 
         let num_nodes = nodes.len();
 
-        let position_to_idx: HashMap<Pair<usize>, usize> = nodes
+        let position_to_idx: HashMap<_, _> = nodes
             .iter()
             .enumerate()
             .map(|(idx, node)| (node.position, idx))
             .collect();
 
-        debug_assert_eq!(
-            nodes
-                .iter()
-                .map(|node| { node.position })
-                .collect::<HashSet<_>>()
-                .len(),
-            num_nodes
-        );
-
+        // unique positions
+        let unique_positions: HashSet<_> = nodes.iter().map(|node| node.position).collect();
+        debug_assert_eq!(unique_positions.len(), num_nodes);
         debug_assert_eq!(position_to_idx.len(), num_nodes);
 
-        let mut union_find = UnionFind::new(num_nodes);
+        let atomic = Self::atomic_segments(pos, segments);
 
+        let mut union_find = UnionFind::new(num_nodes);
         let mut uf_cnt = 0;
 
-        for route in segments.into_iter().filter(|elem| match elem.towards() {
-            Towards::Up | Towards::Down | Towards::Left | Towards::Right => true,
-            Towards::Top | Towards::Bottom => false,
-        }) {
+        for route in atomic.into_iter() {
             let towards = route.towards();
             let Route(source, target) = route;
 
@@ -482,17 +460,14 @@ impl NetTree {
                 .get(&target_pos)
                 .expect("Index out of bounds");
 
-            if !union_find.union(source_idx, target_idx) {
-                debug_assert_eq!(uf_cnt, 0);
+            if union_find.union(source_idx, target_idx) {
                 uf_cnt += 1;
-                continue;
+                Self::connect(&mut nodes, source_idx, target_idx, height, towards);
             }
-
-            Self::connect(&mut nodes, source_idx, target_idx, height, towards);
         }
 
         debug_assert!(union_find.done());
-        debug_assert_eq!(uf_cnt, 1);
+        debug_assert_eq!(uf_cnt + 1, num_nodes);
 
         Self { nodes }
     }
@@ -520,6 +495,84 @@ impl NetTree {
         set_node(sindex, oindex, diff);
         set_node(oindex, sindex, diff.inv());
     }
+
+    /// Generates all nodes' positions
+    fn positions<F>(
+        conn_pins: &[usize],
+        segments: &HashSet<Route<usize>>,
+        pin_position: F,
+    ) -> HashMap<Pair<usize>, Option<usize>>
+    where
+        F: Fn(usize) -> Option<Pair<usize>>,
+    {
+        segments
+            .iter()
+            .map(|&Route(source, target)| [source, target])
+            .map(ArrayVec::from)
+            .map(ArrayVec::into_iter)
+            .flatten()
+            .map(|ref pt| pt.flatten())
+            .map(|pin| (pin, None))
+            .chain(
+                conn_pins
+                    .iter()
+                    .map(|&idx| (pin_position(idx), Some(idx)))
+                    .map(|(pos, idx)| (pos.expect("Pin not stored"), idx)),
+            )
+            .fold(HashMap::new(), |mut hmap, (position, idx)| {
+                // prioritizes Some(index) over None
+                let entry = hmap.entry(position).or_insert(None);
+                if let Some(_) = idx {
+                    *entry = idx;
+                }
+                hmap
+            })
+    }
+
+    /// Removes all segments with height.
+    /// Breaks segments into "atomic" ones.
+    /// Which means to only allow pins to be on a segment's source/target
+    // fn atomic_segments(
+    //     positions: HashMap<Pair<usize>, Option<usize>>,
+    //     segments: HashSet<Route<usize>>,
+    // ) -> Vec<Route<usize>> {
+    //     let (seg_horiz, seg_verti): (HashMap<_, _>, HashMap<_, _>) = segments.into_iter().fold(
+    //         (HashMap::new(), HashMap::new()),
+    //         |(mut horiz, mut verti), elem| {
+    //             match elem.towards() {
+    //                 Towards::Up | Towards::Down => {
+    //                     let row = elem.source().row();
+    //                     horiz.entry(row).or_insert(Vec::new()).push(elem);
+    //                     debug_assert_eq!(row, elem.target().row());
+    //                 }
+    //                 Towards::Left | Towards::Right => {
+    //                     let col = elem.source().col();
+    //                     verti.entry(col).or_insert(Vec::new()).push(elem);
+    //                     debug_assert_eq!(col, elem.target().col());
+    //                 }
+    //                 Towards::Top | Towards::Bottom => (),
+    //             }
+    //             (horiz, verti)
+    //         },
+    //     );
+
+    //     let (mut pair_horiz, mut pair_verti): (HashMap<_, Vec<_>>, HashMap<_, Vec<_>>) =
+    //         positions.keys().fold(
+    //             (HashMap::new(), HashMap::new()),
+    //             |(mut horiz, mut verti), &elem| {
+    //                 horiz.entry(elem.x()).or_insert(Vec::new()).push(elem.y());
+    //                 verti.entry(elem.y()).or_insert(Vec::new()).push(elem.x());
+    //                 (horiz, verti)
+    //             },
+    //         );
+
+    //     pair_horiz
+    //         .iter_mut()
+    //         .for_each(|(_, val)| val.sort_by(|a, b| a.cmp(b)));
+    //     pair_verti
+    //         .iter_mut()
+    //         .for_each(|(_, val)| val.sort_by(|a, b| a.cmp(b)));
+    // }
 }
 
 impl Net {

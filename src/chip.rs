@@ -1,6 +1,9 @@
-use crate::components::{
-    Blockage, Cell, CellType, Conflict, ConflictType, Direction, FactoryID, Layer, MasterCell,
-    MasterPin, Net, Pair, Point, Route,
+use crate::{
+    components::{
+        Blockage, Cell, CellType, Conflict, ConflictType, Direction, FactoryID, Layer, MasterCell,
+        MasterPin, Net, Pair, Point, Route,
+    },
+    utilities,
 };
 use anyhow::Result;
 use rayon::prelude::*;
@@ -9,59 +12,6 @@ use std::{
     fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
     fs,
 };
-
-mod utils {
-    use anyhow::{anyhow, Error, Result};
-    use num::Num;
-    use std::{cmp::PartialEq, fmt::Debug, str::FromStr};
-
-    #[derive(Debug)]
-    pub(super) struct InputError;
-
-    #[derive(Debug)]
-    pub(super) struct NameError;
-
-    impl From<InputError> for Error {
-        fn from(err: InputError) -> Self {
-            anyhow!(format!("Error: {:?}", err))
-        }
-    }
-
-    impl From<NameError> for Error {
-        fn from(err: NameError) -> Self {
-            anyhow!(format!("Error: {:?}", err))
-        }
-    }
-
-    /// Parse a `&str` from an iterator
-    pub(super) fn parse_string<'a, T>(iter: &mut T) -> Result<&'a str>
-    where
-        T: Iterator<Item = &'a str>,
-    {
-        iter.next().ok_or(Error::from(InputError))
-    }
-
-    /// Parse a numeric value (usize, isize...) from an iterator
-    pub(super) fn parse_numeric<'a, T, U>(iter: &mut T) -> Result<U>
-    where
-        T: Iterator<Item = &'a str>,
-        U: FromStr + Num,
-        Error: From<<U as FromStr>::Err>,
-    {
-        parse_string(iter)?.parse().map_err(Error::from)
-    }
-
-    pub(super) fn check_eq<T, U>(mine: T, input: U) -> Result<()>
-    where
-        T: PartialEq<U>,
-    {
-        if mine == input {
-            Ok(())
-        } else {
-            Err(Error::from(NameError))
-        }
-    }
-}
 
 #[derive(Default, Debug)]
 pub struct Chip {
@@ -82,8 +32,9 @@ pub struct Chip {
 }
 
 impl Chip {
+    /// Reads the content of a file into memory
     pub fn read_file(&mut self, filename: &str) -> Result<()> {
-        use utils::*;
+        use utilities::{check_eq, parse_numeric, parse_string};
 
         let content = fs::read_to_string(filename)?;
         let content = &mut content.split_whitespace();
@@ -341,7 +292,7 @@ impl Chip {
 
             let mc = self.mastercells.get(mc_id).expect("MasterCell not found");
             let length = mc.pins.len();
-            let pins: Vec<usize> = (pin_count..pin_count + length).collect();
+            let pins: Vec<_> = (pin_count..pin_count + length).collect();
             pin_count += length;
 
             pin_cell.push(pin_count);
@@ -481,16 +432,19 @@ impl Chip {
         Ok(())
     }
 
+    /// Write the content stored in memory to a file
     pub fn write_file(&mut self, filename: &str) -> Result<()> {
         fs::write(filename, format!("{}\n", self))?;
 
         Ok(())
     }
 
+    /// Returns a reference to a layer
     pub fn get_layer(&self, idx: usize) -> Option<&Layer> {
         self.layers.get(idx)
     }
 
+    /// Returns a mutable reference to a layer
     pub fn get_layer_mut(&mut self, idx: usize) -> Option<&mut Layer> {
         self.layers.get_mut(idx)
     }

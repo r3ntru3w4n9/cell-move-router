@@ -1,4 +1,53 @@
-use std::collections::HashSet;
+use anyhow::{anyhow, Error, Result};
+use num::Num;
+use std::{cmp::PartialEq, collections::HashSet, fmt::Debug, str::FromStr};
+
+#[derive(Debug)]
+pub(super) struct InputError;
+
+#[derive(Debug)]
+pub(super) struct NameError;
+
+impl From<InputError> for Error {
+    fn from(err: InputError) -> Self {
+        anyhow!(format!("Error: {:?}", err))
+    }
+}
+
+impl From<NameError> for Error {
+    fn from(err: NameError) -> Self {
+        anyhow!(format!("Error: {:?}", err))
+    }
+}
+
+/// Parse a `&str` from an iterator
+pub(super) fn parse_string<'a, T>(iter: &mut T) -> Result<&'a str>
+where
+    T: Iterator<Item = &'a str>,
+{
+    iter.next().ok_or(Error::from(InputError))
+}
+
+/// Parse a numeric value (usize, isize...) from an iterator
+pub(super) fn parse_numeric<'a, T, U>(iter: &mut T) -> Result<U>
+where
+    T: Iterator<Item = &'a str>,
+    U: FromStr + Num,
+    Error: From<<U as FromStr>::Err>,
+{
+    parse_string(iter)?.parse().map_err(Error::from)
+}
+
+pub(super) fn check_eq<T, U>(mine: T, input: U) -> Result<()>
+where
+    T: PartialEq<U>,
+{
+    if mine == input {
+        Ok(())
+    } else {
+        Err(Error::from(NameError))
+    }
+}
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct UnionFindNode {
@@ -40,11 +89,10 @@ impl UnionFind {
     }
 
     pub fn done(&self) -> bool {
-        (0..self.len())
+        1 == (0..self.len())
             .map(|idx| self.find(idx))
             .collect::<HashSet<_>>()
             .len()
-            == 1
     }
 
     /// Check if two values are in the same group.
@@ -77,11 +125,15 @@ impl UnionFind {
     /// Finds the root of the current bound tree.
     /// Applies path compression.
     pub fn find_mut(&mut self, index: usize) -> Option<usize> {
-        let ans = self.find(index);
+        let head = self.get_mut(index)?.head;
 
-        self.get_mut(index)?.head = ans.expect("Index out of bounds");
+        if head == index {
+            return Some(index);
+        }
 
-        ans
+        let ans = self.find_mut(head)?;
+        self.get_mut(index)?.head = ans;
+        Some(ans)
     }
 
     /// Joins two different unions.
