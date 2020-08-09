@@ -6,7 +6,7 @@ use std::{
     cmp,
     collections::{HashMap, HashSet},
     fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
-    iter, mem,
+    mem,
     str::FromStr,
     usize,
 };
@@ -328,16 +328,16 @@ impl Route<usize> {
             Point(0, 0, 0) => unreachable!(),
             Point(row, 0, 0) => {
                 if row > 0 {
-                    Towards::Up
+                    Towards::Right
                 } else {
-                    Towards::Down
+                    Towards::Left
                 }
             }
             Point(0, col, 0) => {
                 if col > 0 {
-                    Towards::Right
+                    Towards::Up
                 } else {
-                    Towards::Left
+                    Towards::Down
                 }
             }
             Point(0, 0, lay) => {
@@ -408,8 +408,8 @@ impl NetTree {
     {
         // Using handcrafted `fold` first instead of direct using `collect` here
         // to bypass implementation details of `collect`
-        let pos = Self::positions(&conn_pins, &segments, pin_position);
-        let mut nodes: Vec<_> = pos
+        let position_to_global = Self::positions(&conn_pins, &segments, pin_position);
+        let mut nodes: Vec<_> = position_to_global
             .iter()
             .map(|(&position, &id)| NetNode {
                 id,
@@ -423,7 +423,7 @@ impl NetTree {
 
         let num_nodes = nodes.len();
 
-        let position_to_idx: HashMap<_, _> = nodes
+        let position_to_local: HashMap<_, _> = nodes
             .iter()
             .enumerate()
             .map(|(idx, node)| (node.position, idx))
@@ -432,12 +432,17 @@ impl NetTree {
         // unique positions
         let unique_positions: HashSet<_> = nodes.iter().map(|node| node.position).collect();
         debug_assert_eq!(unique_positions.len(), num_nodes);
-        debug_assert_eq!(position_to_idx.len(), num_nodes);
+        debug_assert_eq!(position_to_local.len(), num_nodes);
 
-        let atomic = Self::atomic_segments(pos, segments);
+        let key_positions = position_to_local.iter().map(|(key, _)| *key).collect();
+        debug_assert_eq!(key_positions, unique_positions);
 
         let mut union_find = UnionFind::new(num_nodes);
         let mut uf_cnt = 0;
+
+        // Convert segments into atomic segments.
+        // Atomic segments are segments who do not contain points other than thier end points.
+        let atomic = Self::into_atomic_segments(segments, key_positions);
 
         for route in atomic.into_iter() {
             let towards = route.towards();
@@ -453,12 +458,8 @@ impl NetTree {
             let source_pos = source.flatten();
             let target_pos = target.flatten();
 
-            let source_idx = *position_to_idx
-                .get(&source_pos)
-                .expect("Index out of bounds");
-            let target_idx = *position_to_idx
-                .get(&target_pos)
-                .expect("Index out of bounds");
+            let source_idx = *position_to_local.get(&source_pos).expect("Pair not found");
+            let target_idx = *position_to_local.get(&target_pos).expect("Pair not found");
 
             if union_find.union(source_idx, target_idx) {
                 uf_cnt += 1;
@@ -470,6 +471,123 @@ impl NetTree {
         debug_assert_eq!(uf_cnt + 1, num_nodes);
 
         Self { nodes }
+    }
+
+    /// Converts segments into atomic segments.
+    fn into_atomic_segments(
+        segments: HashSet<Route<usize>>,
+        positions: HashSet<Pair<usize>>,
+    ) -> Vec<Route<usize>> {
+        let (mut pos_by_row, mut pos_by_col) = positions.into_iter().fold(
+            (HashMap::new(), HashMap::new()),
+            |(mut by_row, mut by_col), pos| {
+                let Pair(row, col) = pos;
+                by_row.entry(row).or_insert(Vec::new()).push(col);
+                by_col.entry(col).or_insert(Vec::new()).push(row);
+                (by_row, by_col)
+            },
+        );
+
+        pos_by_row.iter_mut().for_each(|(_, vec)| vec.sort());
+        pos_by_col.iter_mut().for_each(|(_, vec)| vec.sort());
+
+        // break `route` by sorted `pos` with `dir` as direction
+        let break_single_segment = |route: Route<_>, pos: &[_], dir: Direction| -> Vec<_> {
+            let (min, max);
+            let Route(mut source, mut target) = route;
+
+            debug_assert_eq!(source.lay(), target.lay());
+
+            match dir {
+                Direction::Horizontal => {
+                    debug_assert_eq!(source.col(), target.col());
+
+                    if source.row() > target.row() {
+                        mem::swap(&mut source, &mut target);
+                    }
+                    min = source.row();
+                    max = target.row();
+
+                    match route.towards() {
+                        Towards::Left | Towards::Right => {}
+                        Towards::Up | Towards::Down | Towards::Top | Towards::Bottom => {
+                            unreachable!()
+                        }
+                    }
+                }
+                Direction::Vertical => {
+                    debug_assert_eq!(source.row(), target.row());
+
+                    if source.col() > target.col() {
+                        mem::swap(&mut source, &mut target);
+                    }
+                    min = source.col();
+                    max = target.col();
+
+                    match route.towards() {
+                        Towards::Up | Towards::Down => {}
+                        Towards::Left | Towards::Right | Towards::Top | Towards::Bottom => {
+                            unreachable!()
+                        }
+                    }
+                }
+            }
+
+            debug_assert!(min < max);
+
+            let filtered: Vec<_> = pos
+                .iter()
+                .filter(|elem| **elem >= min && **elem <= max)
+                .collect();
+
+            let all_pairs = filtered.windows(2).map(|arr| match arr {
+                &[a, b] => (a, b),
+                _ => unreachable!(),
+            });
+
+            let Point(srow, scol, slay) = source;
+            let Point(trow, tcol, tlay) = target;
+
+            match dir {
+                Direction::Horizontal => all_pairs
+                    .map(|(s, t)| Route(Point(*s, scol, slay), Point(*t, tcol, tlay)))
+                    .collect(),
+                Direction::Vertical => all_pairs
+                    .map(|(s, t)| Route(Point(srow, *s, slay), Point(trow, *t, tlay)))
+                    .collect(),
+            }
+        };
+
+        segments
+            .into_iter()
+            .filter(|route| match route.towards() {
+                Towards::Up | Towards::Down | Towards::Left | Towards::Right => true,
+                Towards::Top | Towards::Bottom => false,
+            })
+            .flat_map(|route| {
+                let (dir, pos) = match route.towards() {
+                    Towards::Left | Towards::Right => {
+                        let col = route.source().col();
+                        debug_assert_eq!(col, route.target().col());
+                        (
+                            Direction::Horizontal,
+                            pos_by_col.get(&col).expect("Position not found"),
+                        )
+                    }
+                    Towards::Up | Towards::Down => {
+                        let row = route.source().row();
+                        debug_assert_eq!(row, route.target().row());
+                        (
+                            Direction::Vertical,
+                            pos_by_row.get(&row).expect("Position not found"),
+                        )
+                    }
+                    Towards::Top | Towards::Bottom => unreachable!(),
+                };
+
+                break_single_segment(route, pos, dir).into_iter()
+            })
+            .collect()
     }
 
     /// Connects two different nodes.
@@ -528,51 +646,6 @@ impl NetTree {
                 hmap
             })
     }
-
-    /// Removes all segments with height.
-    /// Breaks segments into "atomic" ones.
-    /// Which means to only allow pins to be on a segment's source/target
-    // fn atomic_segments(
-    //     positions: HashMap<Pair<usize>, Option<usize>>,
-    //     segments: HashSet<Route<usize>>,
-    // ) -> Vec<Route<usize>> {
-    //     let (seg_horiz, seg_verti): (HashMap<_, _>, HashMap<_, _>) = segments.into_iter().fold(
-    //         (HashMap::new(), HashMap::new()),
-    //         |(mut horiz, mut verti), elem| {
-    //             match elem.towards() {
-    //                 Towards::Up | Towards::Down => {
-    //                     let row = elem.source().row();
-    //                     horiz.entry(row).or_insert(Vec::new()).push(elem);
-    //                     debug_assert_eq!(row, elem.target().row());
-    //                 }
-    //                 Towards::Left | Towards::Right => {
-    //                     let col = elem.source().col();
-    //                     verti.entry(col).or_insert(Vec::new()).push(elem);
-    //                     debug_assert_eq!(col, elem.target().col());
-    //                 }
-    //                 Towards::Top | Towards::Bottom => (),
-    //             }
-    //             (horiz, verti)
-    //         },
-    //     );
-
-    //     let (mut pair_horiz, mut pair_verti): (HashMap<_, Vec<_>>, HashMap<_, Vec<_>>) =
-    //         positions.keys().fold(
-    //             (HashMap::new(), HashMap::new()),
-    //             |(mut horiz, mut verti), &elem| {
-    //                 horiz.entry(elem.x()).or_insert(Vec::new()).push(elem.y());
-    //                 verti.entry(elem.y()).or_insert(Vec::new()).push(elem.x());
-    //                 (horiz, verti)
-    //             },
-    //         );
-
-    //     pair_horiz
-    //         .iter_mut()
-    //         .for_each(|(_, val)| val.sort_by(|a, b| a.cmp(b)));
-    //     pair_verti
-    //         .iter_mut()
-    //         .for_each(|(_, val)| val.sort_by(|a, b| a.cmp(b)));
-    // }
 }
 
 impl Net {
