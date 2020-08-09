@@ -440,8 +440,6 @@ impl NetTree {
         let mut union_find = UnionFind::new(num_nodes);
         let mut uf_cnt = 0;
 
-        // Convert segments into atomic segments.
-        // Atomic segments are segments who do not contain points other than thier end points.
         let atomic = Self::into_atomic_segments(segments, key_positions);
 
         for route in atomic.into_iter() {
@@ -474,6 +472,7 @@ impl NetTree {
     }
 
     /// Converts segments into atomic segments.
+    /// Atomic segments are segments who do not contain points other than thier end points.
     fn into_atomic_segments(
         segments: HashSet<Route<usize>>,
         positions: HashSet<Pair<usize>>,
@@ -490,73 +489,6 @@ impl NetTree {
 
         pos_by_row.iter_mut().for_each(|(_, vec)| vec.sort());
         pos_by_col.iter_mut().for_each(|(_, vec)| vec.sort());
-
-        // break `route` by sorted `pos` with `dir` as direction
-        let break_single_segment = |route: Route<_>, pos: &[_], dir: Direction| -> Vec<_> {
-            let (min, max);
-            let Route(mut source, mut target) = route;
-
-            debug_assert_eq!(source.lay(), target.lay());
-
-            match dir {
-                Direction::Horizontal => {
-                    debug_assert_eq!(source.col(), target.col());
-
-                    if source.row() > target.row() {
-                        mem::swap(&mut source, &mut target);
-                    }
-                    min = source.row();
-                    max = target.row();
-
-                    match route.towards() {
-                        Towards::Left | Towards::Right => {}
-                        Towards::Up | Towards::Down | Towards::Top | Towards::Bottom => {
-                            unreachable!()
-                        }
-                    }
-                }
-                Direction::Vertical => {
-                    debug_assert_eq!(source.row(), target.row());
-
-                    if source.col() > target.col() {
-                        mem::swap(&mut source, &mut target);
-                    }
-                    min = source.col();
-                    max = target.col();
-
-                    match route.towards() {
-                        Towards::Up | Towards::Down => {}
-                        Towards::Left | Towards::Right | Towards::Top | Towards::Bottom => {
-                            unreachable!()
-                        }
-                    }
-                }
-            }
-
-            debug_assert!(min < max);
-
-            let filtered: Vec<_> = pos
-                .iter()
-                .filter(|elem| **elem >= min && **elem <= max)
-                .collect();
-
-            let all_pairs = filtered.windows(2).map(|arr| match arr {
-                &[a, b] => (a, b),
-                _ => unreachable!(),
-            });
-
-            let Point(srow, scol, slay) = source;
-            let Point(trow, tcol, tlay) = target;
-
-            match dir {
-                Direction::Horizontal => all_pairs
-                    .map(|(s, t)| Route(Point(*s, scol, slay), Point(*t, tcol, tlay)))
-                    .collect(),
-                Direction::Vertical => all_pairs
-                    .map(|(s, t)| Route(Point(srow, *s, slay), Point(trow, *t, tlay)))
-                    .collect(),
-            }
-        };
 
         segments
             .into_iter()
@@ -585,9 +517,78 @@ impl NetTree {
                     Towards::Top | Towards::Bottom => unreachable!(),
                 };
 
-                break_single_segment(route, pos, dir).into_iter()
+                Self::break_single_segment(route, pos, dir).into_iter()
             })
             .collect()
+    }
+
+    // Breaks `route` by sorted `pos` with `dir` as direction
+    fn break_single_segment(
+        route: Route<usize>,
+        pos: &[usize],
+        dir: Direction,
+    ) -> Vec<Route<usize>> {
+        let (min, max);
+        let Route(mut source, mut target) = route;
+
+        debug_assert_eq!(source.lay(), target.lay());
+
+        match dir {
+            Direction::Horizontal => {
+                debug_assert_eq!(source.col(), target.col());
+
+                if source.row() > target.row() {
+                    mem::swap(&mut source, &mut target);
+                }
+                min = source.row();
+                max = target.row();
+
+                match route.towards() {
+                    Towards::Left | Towards::Right => {}
+                    Towards::Up | Towards::Down | Towards::Top | Towards::Bottom => unreachable!(),
+                }
+            }
+            Direction::Vertical => {
+                debug_assert_eq!(source.row(), target.row());
+
+                if source.col() > target.col() {
+                    mem::swap(&mut source, &mut target);
+                }
+                min = source.col();
+                max = target.col();
+
+                match route.towards() {
+                    Towards::Up | Towards::Down => {}
+                    Towards::Left | Towards::Right | Towards::Top | Towards::Bottom => {
+                        unreachable!()
+                    }
+                }
+            }
+        }
+
+        debug_assert!(min < max);
+
+        let filtered: Vec<_> = pos
+            .iter()
+            .filter(|elem| **elem >= min && **elem <= max)
+            .collect();
+
+        let all_pairs = filtered.windows(2).map(|arr| match arr {
+            &[a, b] => (a, b),
+            _ => unreachable!(),
+        });
+
+        let Point(srow, scol, slay) = source;
+        let Point(trow, tcol, tlay) = target;
+
+        match dir {
+            Direction::Horizontal => all_pairs
+                .map(|(s, t)| Route(Point(*s, scol, slay), Point(*t, tcol, tlay)))
+                .collect(),
+            Direction::Vertical => all_pairs
+                .map(|(s, t)| Route(Point(srow, *s, slay), Point(trow, *t, tlay)))
+                .collect(),
+        }
     }
 
     /// Connects two different nodes.
