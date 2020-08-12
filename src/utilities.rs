@@ -3,10 +3,10 @@ use num::Num;
 use std::{cmp::PartialEq, fmt::Debug, str::FromStr};
 
 #[derive(Debug)]
-pub(super) struct InputError;
+pub struct InputError;
 
 #[derive(Debug)]
-pub(super) struct NameError;
+pub struct NameError;
 
 impl From<InputError> for Error {
     fn from(err: InputError) -> Self {
@@ -20,16 +20,16 @@ impl From<NameError> for Error {
     }
 }
 
-/// Parse a `&str` from an iterator
-pub(super) fn parse_string<'a, T>(iter: &mut T) -> Result<&'a str>
+/// Parses a `&str` from an iterator
+pub fn parse_string<'a, T>(iter: &mut T) -> Result<&'a str>
 where
     T: Iterator<Item = &'a str>,
 {
-    iter.next().ok_or(InputError.into())
+    iter.next().ok_or(InputError).map_err(Error::from)
 }
 
-/// Parse a numeric value (usize, isize...) from an iterator
-pub(super) fn parse_numeric<'a, T, U>(iter: &mut T) -> Result<U>
+/// Parses a numeric value (usize, isize...) from an iterator
+pub fn parse_numeric<'a, T, U>(iter: &mut T) -> Result<U>
 where
     T: Iterator<Item = &'a str>,
     U: FromStr + Num,
@@ -38,17 +38,20 @@ where
     parse_string(iter)?.parse().map_err(Error::from)
 }
 
-pub(super) fn check_eq<T, U>(mine: T, input: U) -> Result<()>
+/// Returns `Ok(())` if `mine == input`.
+/// Returns `Err(NameError)` otherwise.
+pub fn check_eq<T, U>(mine: T, input: U) -> Result<()>
 where
     T: PartialEq<U>,
 {
     if mine == input {
         Ok(())
     } else {
-        Err(NameError.into())
+        Err(NameError).map_err(Error::from)
     }
 }
 
+/// A UnionFind instance.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct UnionFindNode {
     /// the head of current union

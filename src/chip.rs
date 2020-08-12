@@ -33,7 +33,8 @@ pub struct Chip {
 }
 
 impl Chip {
-    /// Reads the content of a file into memory
+    /// Reads the content of a file into memory.
+    /// This function reads the input file and stores it into `self`.
     pub fn read_file(&mut self, filename: &str) -> Result<()> {
         use utilities::{check_eq, parse_numeric, parse_string};
 
@@ -113,6 +114,9 @@ impl Chip {
             let l: usize = parse_numeric(content)?;
             let val: isize = parse_numeric(content)?;
 
+            // - 1 is required in converting from name to id.
+            // It is only written explicitly here  because other parts of the code
+            // do it implicityly in the `FactoryID::from_str` trait method.
             let (r, c, l) = (r - 1, c - 1, l - 1);
 
             let dim = self.dim;
@@ -195,7 +199,7 @@ impl Chip {
 
         // NumNeighborCellExtraDemand <count>
         let keyword = parse_string(content)?;
-        assert_eq!(keyword, "NumNeighborCellExtraDemand");
+        check_eq(keyword, "NumNeighborCellExtraDemand")?;
         let extra_count: usize = parse_numeric(content)?;
 
         self.conflicts.reserve(2 * extra_count);
@@ -209,7 +213,7 @@ impl Chip {
             let adj_grid = if grid_type_str == "adjHGGrid" {
                 ConflictType::AdjHGGrid
             } else {
-                assert_eq!(grid_type_str, "sameGGrid");
+                check_eq(grid_type_str, "sameGGrid")?;
                 ConflictType::SameGGrid
             };
 
@@ -403,7 +407,7 @@ impl Chip {
             })
             .collect();
 
-        // parse ends here
+        // parsing ends here
         check_eq(content.next(), None)?;
         Ok(())
     }
@@ -451,6 +455,7 @@ impl Display for Chip {
             acc
         };
 
+        // `fold_with + reduce_with` is the parallel iterators' equivalent to `fold_with` of iterators
         let names: String = self
             .nets
             .par_iter()

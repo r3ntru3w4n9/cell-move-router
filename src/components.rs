@@ -313,6 +313,7 @@ where
 }
 
 impl Route<usize> {
+    /// Calculates the difference between `source` and `target`
     fn vector(&self) -> Point<isize> {
         let Route(source, target) = self;
         Point(
@@ -322,8 +323,11 @@ impl Route<usize> {
         )
     }
 
+    /// Categorizes the result of `vector`.
     pub fn towards(&self) -> Towards {
         match self.vector() {
+            // A vector can only be of (a, 0, 0), (0, b, 0), (0, 0, c) with a, b, c != 0
+            // Hence the unreachable arm.
             Point(0, 0, 0) => unreachable!(),
             Point(row, 0, 0) => {
                 if row > 0 {
@@ -361,6 +365,7 @@ where
 }
 
 impl Towards {
+    /// Get the opposite direction.
     pub fn inv(&self) -> Self {
         match self {
             Towards::Up => Towards::Down,
@@ -374,10 +379,12 @@ impl Towards {
 }
 
 impl NetNode {
+    /// List the neighboring nodes.
     pub fn neightbors(&self) -> [Option<Pointer>; 4] {
         [self.up, self.down, self.left, self.right]
     }
 
+    /// Find the highest and lowest height of a cell.
     pub fn span(&self) -> (usize, usize) {
         self.neightbors()
             .iter()
@@ -388,6 +395,8 @@ impl NetNode {
             })
     }
 
+    /// Get the index of a neighboring node.
+    /// As the tree is 2D, `Top` and `Bottom` are not allowed as input.
     pub fn index(&self, towards: Towards) -> Option<Pointer> {
         match towards {
             Towards::Up => self.up,
@@ -405,6 +414,7 @@ impl NetTree {
     where
         F: Fn(usize) -> Option<Pair<usize>>,
     {
+        // Converts a position pair into a global index (pin index).
         // Using handcrafted `fold` first instead of direct using `collect` here
         // to bypass implementation details of `collect`
         let position_to_global = Self::positions(&conn_pins, &segments, pin_position);
@@ -422,13 +432,14 @@ impl NetTree {
 
         let num_nodes = nodes.len();
 
+        // Converts a position pair into a local index (tree index).
         let position_to_local: HashMap<_, _> = nodes
             .iter()
             .enumerate()
             .map(|(idx, node)| (node.position, idx))
             .collect();
 
-        // unique positions
+        // unique positions in this tree.
         let unique_positions: HashSet<_> = nodes.iter().map(|node| node.position).collect();
         debug_assert_eq!(unique_positions.len(), num_nodes);
         debug_assert_eq!(position_to_local.len(), num_nodes);
@@ -441,6 +452,8 @@ impl NetTree {
 
         let atomic = Self::into_atomic_segments(segments, key_positions);
 
+        // Follows the same routine as in MST creation.
+        // Removes redundant nodes.
         for route in atomic.into_iter() {
             let towards = route.towards();
             let Route(source, target) = route;
@@ -476,6 +489,7 @@ impl NetTree {
         segments: HashSet<Route<usize>>,
         positions: HashSet<Pair<usize>>,
     ) -> Vec<Route<usize>> {
+        // Groups pairs by their `rows` and `cols`, respectively
         let (mut pos_by_row, mut pos_by_col) = positions.into_iter().fold(
             (HashMap::new(), HashMap::new()),
             |(mut by_row, mut by_col), pos| {
@@ -486,6 +500,7 @@ impl NetTree {
             },
         );
 
+        // Within the same group, sort the values (positions).
         pos_by_row.iter_mut().for_each(|(_, vec)| vec.sort());
         pos_by_col.iter_mut().for_each(|(_, vec)| vec.sort());
 
@@ -521,7 +536,7 @@ impl NetTree {
             .collect()
     }
 
-    // Breaks `route` by sorted `pos` with `dir` as direction
+    /// Breaks `route` by sorted `pos` with `dir` as direction
     fn break_single_segment(
         route: Route<usize>,
         pos: &[usize],
@@ -532,6 +547,9 @@ impl NetTree {
 
         debug_assert_eq!(source.lay(), target.lay());
 
+        // Assigns min, max to their relavant values.
+        // For a horizontal edge, only `x` positions are relavent.
+        // For a vertical edge, only `y` positions are relavent.
         match dir {
             Direction::Horizontal => {
                 debug_assert_eq!(source.col(), target.col());
@@ -567,11 +585,13 @@ impl NetTree {
 
         debug_assert!(min < max);
 
+        // Discards irrelavent positions.
         let filtered: Vec<_> = pos
             .iter()
             .filter(|elem| **elem >= min && **elem <= max)
             .collect();
 
+        // Generates relavent pairs to put into `Route` objects.
         let all_pairs = filtered.windows(2).map(|arr| match *arr {
             [a, b] => (a, b),
             _ => unreachable!(),
@@ -580,13 +600,20 @@ impl NetTree {
         let Point(srow, scol, slay) = source;
         let Point(trow, tcol, tlay) = target;
 
+        // Generates the final route. Puts "relavent pairs" into `Route` objects.
         match dir {
-            Direction::Horizontal => all_pairs
-                .map(|(s, t)| Route(Point(*s, scol, slay), Point(*t, tcol, tlay)))
-                .collect(),
-            Direction::Vertical => all_pairs
-                .map(|(s, t)| Route(Point(srow, *s, slay), Point(trow, *t, tlay)))
-                .collect(),
+            Direction::Horizontal => {
+                debug_assert!(srow < trow);
+                all_pairs
+                    .map(|(s, t)| Route(Point(*s, scol, slay), Point(*t, tcol, tlay)))
+                    .collect()
+            }
+            Direction::Vertical => {
+                debug_assert!(scol < tcol);
+                all_pairs
+                    .map(|(s, t)| Route(Point(srow, *s, slay), Point(trow, *t, tlay)))
+                    .collect()
+            }
         }
     }
 
@@ -610,6 +637,7 @@ impl NetTree {
 
         debug_assert_ne!(sindex, oindex);
 
+        // Sets both nodes that are neightbors.
         set_node(sindex, oindex, diff);
         set_node(oindex, sindex, diff.inv());
     }
@@ -623,11 +651,14 @@ impl NetTree {
     where
         F: Fn(usize) -> Option<Pair<usize>>,
     {
+        // Real pins are converted to positions.
         let pins_iter = conn_pins
             .iter()
             .map(|&idx| (pin_position(idx), Some(idx)))
             .map(|(pos, idx)| (pos.expect("Pin not stored"), idx));
 
+        // Endpoints in the segments are converted to positions.
+        // Records virtual points (id == None).
         let segs_iter = segments
             .iter()
             .map(|Route(source, target)| [source, target])
@@ -637,6 +668,7 @@ impl NetTree {
             .map(|ref pt| pt.flatten())
             .map(|pin| (pin, None));
 
+        // Merges and creates a final pin list.
         segs_iter
             .chain(pins_iter)
             .fold(HashMap::new(), |mut hmap, (position, idx)| {
@@ -669,6 +701,7 @@ impl Net {
         }
     }
 
+    /// Recursively explores nearby nodes. Converts the paths to strings in the process.
     fn fmt_recursive(
         &self,
         f: &mut Formatter,
@@ -703,6 +736,7 @@ impl Net {
 }
 
 impl Display for Net {
+    /// Converts `Net` to `String`
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
         let name = &Self::from_numeric(self.id).map_err(|_| FmtError)?;
 
