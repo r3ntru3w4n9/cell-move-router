@@ -450,7 +450,7 @@ impl NetTree {
         let mut union_find = UnionFind::new(num_nodes);
         let mut uf_cnt = 0;
 
-        let atomic = Self::into_atomic_segments(segments, key_positions);
+        let atomic = Self::atomic_segments(segments, key_positions);
 
         // Follows the same routine as in MST creation.
         // Removes redundant nodes.
@@ -485,7 +485,7 @@ impl NetTree {
 
     /// Converts segments into atomic segments.
     /// Atomic segments are segments who do not contain points other than thier end points.
-    fn into_atomic_segments(
+    fn atomic_segments(
         segments: HashSet<Route<usize>>,
         positions: HashSet<Pair<usize>>,
     ) -> Vec<Route<usize>> {
@@ -494,8 +494,8 @@ impl NetTree {
             (HashMap::new(), HashMap::new()),
             |(mut by_row, mut by_col), pos| {
                 let Pair(row, col) = pos;
-                by_row.entry(row).or_insert(Vec::new()).push(col);
-                by_col.entry(col).or_insert(Vec::new()).push(row);
+                by_row.entry(row).or_insert_with(Vec::new).push(col);
+                by_col.entry(col).or_insert_with(Vec::new).push(row);
                 (by_row, by_col)
             },
         );
@@ -726,7 +726,7 @@ impl Net {
             let source = node.position.with(height);
             let target = nearby_node.position.with(height);
 
-            write!(f, "{} {}\n", Route(source, target), name)?;
+            writeln!(f, "{} {}", Route(source, target), name)?;
 
             self.fmt_recursive(f, nearby_node, list, name, dir)?;
         }
