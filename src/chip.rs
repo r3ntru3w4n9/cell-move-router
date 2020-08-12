@@ -8,6 +8,7 @@ use crate::{
 use anyhow::Result;
 use rayon::prelude::*;
 use std::{
+    cmp::Ordering,
     collections::{HashMap, HashSet},
     fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
     fs,
@@ -305,34 +306,9 @@ impl Chip {
             });
         }
 
-        let binary_search = |target: usize, mut low: usize, mut high: usize| -> Option<usize> {
-            loop {
-                debug_assert!(low <= high);
-
-                let middle = (low + high) / 2;
-                let value = *pin_cell.get(middle)?;
-
-                if target <= value {
-                    high = middle;
-                } else {
-                    debug_assert!(target > value);
-                    // avoids infinite loop since it's possible that low == middle
-                    if low == middle {
-                        low += 1;
-                    } else {
-                        low = middle;
-                    }
-                }
-
-                if low == high {
-                    return Some(high);
-                }
-            }
-        };
-
         let pin_position = |pin_id: usize| -> Option<Pair<usize>> {
+            let idx = Self::binary_search(&pin_cell, pin_id, 0, pin_cell.len())?;
             let cells = &self.cells;
-            let idx = binary_search(pin_id, 0, cells.len())?;
             let position = cells.get(idx)?.position;
             Some(position)
         };
@@ -430,6 +406,24 @@ impl Chip {
         // parse ends here
         check_eq(content.next(), None)?;
         Ok(())
+    }
+
+    /// Does a binary search in the given range [low, high)
+    fn binary_search(array: &[usize], target: usize, low: usize, high: usize) -> Option<usize> {
+        if low == high {
+            return Some(high);
+        }
+
+        debug_assert!(low < high);
+
+        let mid = (low + high) / 2;
+        let val = array.get(mid)?;
+
+        match target.cmp(val) {
+            Ordering::Less => Self::binary_search(array, target, low, mid),
+            Ordering::Equal => Some(mid + 1),
+            Ordering::Greater => Self::binary_search(array, target, mid + 1, high),
+        }
     }
 
     /// Write the content stored in memory to a file

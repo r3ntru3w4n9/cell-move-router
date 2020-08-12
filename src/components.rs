@@ -104,7 +104,6 @@ pub struct Layer {
 }
 
 /// Some information about a MasterPin.
-
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct MasterPin {
     /// id of the pin
@@ -573,8 +572,8 @@ impl NetTree {
             .filter(|elem| **elem >= min && **elem <= max)
             .collect();
 
-        let all_pairs = filtered.windows(2).map(|arr| match arr {
-            &[a, b] => (a, b),
+        let all_pairs = filtered.windows(2).map(|arr| match *arr {
+            [a, b] => (a, b),
             _ => unreachable!(),
         });
 
@@ -624,24 +623,26 @@ impl NetTree {
     where
         F: Fn(usize) -> Option<Pair<usize>>,
     {
-        segments
+        let pins_iter = conn_pins
             .iter()
-            .map(|&Route(source, target)| [source, target])
+            .map(|&idx| (pin_position(idx), Some(idx)))
+            .map(|(pos, idx)| (pos.expect("Pin not stored"), idx));
+
+        let segs_iter = segments
+            .iter()
+            .map(|Route(source, target)| [source, target])
             .map(ArrayVec::from)
             .map(ArrayVec::into_iter)
             .flatten()
             .map(|ref pt| pt.flatten())
-            .map(|pin| (pin, None))
-            .chain(
-                conn_pins
-                    .iter()
-                    .map(|&idx| (pin_position(idx), Some(idx)))
-                    .map(|(pos, idx)| (pos.expect("Pin not stored"), idx)),
-            )
+            .map(|pin| (pin, None));
+
+        segs_iter
+            .chain(pins_iter)
             .fold(HashMap::new(), |mut hmap, (position, idx)| {
                 // prioritizes Some(index) over None
                 let entry = hmap.entry(position).or_insert(None);
-                if let Some(_) = idx {
+                if idx.is_some() {
                     *entry = idx;
                 }
                 hmap
@@ -710,7 +711,7 @@ impl Display for Net {
             let (min, max) = node.span();
             write!(f, "{} {} {} ", row, col, min)?;
             write!(f, "{} {} {} ", row, col, max)?;
-            write!(f, "{}\n", name)?;
+            writeln!(f, "{}", name)?;
         }
 
         let directions =

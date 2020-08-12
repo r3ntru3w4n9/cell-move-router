@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Error, Result};
 use num::Num;
-use std::{cmp::PartialEq, collections::HashSet, fmt::Debug, str::FromStr};
+use std::{cmp::PartialEq, fmt::Debug, str::FromStr};
 
 #[derive(Debug)]
 pub(super) struct InputError;
@@ -25,7 +25,7 @@ pub(super) fn parse_string<'a, T>(iter: &mut T) -> Result<&'a str>
 where
     T: Iterator<Item = &'a str>,
 {
-    iter.next().ok_or(Error::from(InputError))
+    iter.next().ok_or(InputError.into())
 }
 
 /// Parse a numeric value (usize, isize...) from an iterator
@@ -45,7 +45,7 @@ where
     if mine == input {
         Ok(())
     } else {
-        Err(Error::from(NameError))
+        Err(NameError.into())
     }
 }
 
@@ -84,15 +84,29 @@ impl UnionFind {
         }
     }
 
+    /// Number of union-find initial groups.
     pub fn len(&self) -> usize {
         self.nodes.len()
     }
 
+    /// Number of union-find initial groups == 0.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The set id every node belongs.
+    pub fn belongs(&self) -> Vec<usize> {
+        (0..self.len())
+            .map(|idx| self.find(idx).expect("Index out of bounds"))
+            .collect()
+    }
+
+    /// Check if there is only one set left.
     pub fn done(&self) -> bool {
-        1 == (0..self.len())
-            .map(|idx| self.find(idx))
-            .collect::<HashSet<_>>()
-            .len()
+        self.belongs().windows(2).all(|arr| match arr {
+            [a, b] => *a == *b,
+            _ => unreachable!(),
+        })
     }
 
     /// Check if two values are in the same group.
