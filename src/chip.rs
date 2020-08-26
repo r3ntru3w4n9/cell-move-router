@@ -17,19 +17,21 @@ use std::{
 #[derive(Default, Debug)]
 pub struct Chip {
     /// maximum movement count
-    max_move: usize,
+    pub max_move: usize,
+    /// already moved cells
+    pub already_moved: usize,
     /// dimensions
-    dim: Pair<usize>,
+    pub dim: Pair<usize>,
     /// organized layers
-    layers: Vec<Layer>,
+    pub layers: Vec<Layer>,
     /// organized mastercells
-    mastercells: Vec<MasterCell>,
+    pub mastercells: Vec<MasterCell>,
     /// all cells
-    cells: Vec<Cell>,
+    pub cells: Vec<Cell>,
     /// all nets
-    nets: Vec<Net>,
+    pub nets: Vec<Net>,
     /// all conflicts
-    conflicts: HashMap<usize, HashSet<Conflict>>,
+    pub conflicts: HashMap<usize, HashSet<Conflict>>,
 }
 
 impl Chip {
@@ -305,6 +307,7 @@ impl Chip {
             self.cells.push(Cell {
                 id,
                 movable,
+                moved: false,
                 position,
                 pins,
             });
@@ -454,6 +457,21 @@ impl Display for Chip {
             acc.push_str(&s);
             acc
         };
+
+        // NumMovedCellInst <movedCellInstCount>
+        writeln!(f, "NumMovedCellInst {}", self.already_moved)?;
+
+        let mut num_moved = 0;
+        for cell in self.cells.iter() {
+            if cell.moved {
+                num_moved += 1;
+            }
+            writeln!(f, "{}", cell)?;
+        }
+        debug_assert_eq!(num_moved, self.already_moved);
+
+        // NumRoutes <routeSegmentCount>
+        writeln!(f, "NumRoutes {}", self.nets.len())?;
 
         // `fold_with + reduce_with` is the parallel iterators' equivalent to `fold_with` of iterators
         let names: String = self

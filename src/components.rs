@@ -22,6 +22,16 @@ pub trait FactoryID {
     /// The name of an instance is uniquely determined by its prefix and id
     fn prefix() -> &'static str;
 
+    /// Numeric operation converting from string.
+    fn from_str_op(num: usize) -> usize {
+        num - 1
+    }
+
+    /// Numeric operation converting from numeric values.
+    fn from_num_op(num: usize) -> usize {
+        num + 1
+    }
+
     /// Converts from &str to usize.
     fn from_str(name: &str) -> Result<usize>
     where
@@ -30,13 +40,15 @@ pub trait FactoryID {
         // subtracted by one because of the offset
         let length = Self::prefix().len();
 
-        Ok(name[length..].parse::<usize>().map_err(Error::from)? - 1)
+        let num = name[length..].parse::<usize>().map_err(Error::from)?;
+
+        Ok(Self::from_str_op(num))
     }
 
     /// Converts from usize to String.
-    fn from_numeric(id: usize) -> Result<String> {
+    fn from_num(id: usize) -> Result<String> {
         // added by one because of the offset
-        Ok(format!("{}{}", Self::prefix(), id + 1))
+        Ok(format!("{}{}", Self::prefix(), Self::from_num_op(id)))
     }
 }
 
@@ -155,6 +167,8 @@ pub struct Cell {
     pub id: usize,
     /// if the cell can be moved
     pub movable: CellType,
+    /// whether the cell has moved
+    pub moved: bool,
     /// position
     pub position: Pair<usize>,
     /// mastercell type
@@ -303,6 +317,15 @@ impl FactoryID for Cell {
     }
 }
 
+impl<T> Display for Pair<T>
+where
+    T: Copy + Display + Num,
+{
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(f, "{} {}", self.x(), self.y())
+    }
+}
+
 impl<T> Display for Point<T>
 where
     T: Copy + Display + Num,
@@ -375,6 +398,17 @@ impl Towards {
             Towards::Top => Towards::Bottom,
             Towards::Bottom => Towards::Top,
         }
+    }
+}
+
+impl Display for Cell {
+    fn fmt(&self, f: &mut Formatter) -> FmtResult {
+        write!(
+            f,
+            "CellInst {} {}",
+            Self::from_num(self.id).map_err(|_| FmtError)?,
+            self.position
+        )
     }
 }
 
@@ -738,7 +772,7 @@ impl Net {
 impl Display for Net {
     /// Converts `Net` to `String`
     fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        let name = &Self::from_numeric(self.id).map_err(|_| FmtError)?;
+        let name = &Self::from_num(self.id).map_err(|_| FmtError)?;
 
         for node in self.tree.nodes.iter() {
             let Pair(row, col) = node.position;
