@@ -12,6 +12,7 @@ use std::{
     collections::{HashMap, HashSet},
     fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
     fs,
+    time::{Duration, Instant},
 };
 
 #[derive(Default, Debug)]
@@ -413,6 +414,11 @@ impl Chip {
         // parsing ends here
         check_eq(content.next(), None)?;
         Ok(())
+    }
+
+    /// Runs all operations.
+    pub fn run(&mut self, duration: Duration) -> Result<()> {
+        todo!()
     }
 
     /// Does a binary search in the given range [low, high)
