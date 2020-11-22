@@ -1,24 +1,32 @@
-use structopt::StructOpt;
+use clap::Clap;
 
-#[derive(StructOpt, Default, Debug)]
+#[derive(Clap, Clone, Default, Debug)]
 pub struct Args {
     // input file name
-    #[structopt(short, long)]
-    pub infile: Option<String>,
+    #[clap(short, long)]
+    pub infile: String,
 
     // output file name
-    #[structopt(short, long)]
-    pub outfile: Option<String>,
+    #[clap(short, long)]
+    pub outfile: String,
 
     // time limit in seconds
-    #[structopt(short, long)]
+    #[clap(short, long)]
     pub sec: Option<usize>,
 
     // time limit in minutes
-    #[structopt(short, long)]
+    #[clap(short, long)]
     pub min: Option<usize>,
 
     // time limit in hours
-    #[structopt(short, long)]
-    pub hours: Option<usize>,
+    #[clap(short, long)]
+    pub hr: Option<usize>,
+
+    // move cells
+    #[clap(short, long)]
+    pub cell: bool,
+
+    // route nets
+    #[clap(short, long)]
+    pub net: bool,
 }

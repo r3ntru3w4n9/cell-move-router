@@ -1,11 +1,12 @@
 use crate::{
+    args::Args,
     components::{
         Blockage, Cell, CellType, Conflict, ConflictType, Direction, FactoryID, Layer, MasterCell,
         MasterPin, Net, Pair, Point, Route,
     },
     utilities,
 };
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use std::{
     cmp::Ordering,
@@ -416,9 +417,58 @@ impl Chip {
         Ok(())
     }
 
+    fn duration(args: &Args) -> Duration {
+        use crate::consts::*;
+
+        // By default duration is equal to 1 hr
+        match args {
+            Args {
+                sec: Some(sec),
+                min: None,
+                hr: None,
+                ..
+            } => Duration::from_secs(*sec as u64),
+            Args {
+                sec: None,
+                min: Some(min),
+                hr: None,
+                ..
+            } => Duration::from_secs(SECS_PER_MIN * *min as u64),
+            Args {
+                sec: None,
+                min: None,
+                hr: Some(hr),
+                ..
+            } => Duration::from_secs(SECS_PER_HR * *hr as u64),
+            _ => Duration::from_secs(SECS_PER_HR),
+        }
+    }
+
+    fn check_time(start: Instant, duration: Duration) -> Result<()> {
+        let now = Instant::now();
+        if now - start >= duration {
+            Ok(())
+        } else {
+            Err(anyhow!("Time's up!"))
+        }
+    }
+
     /// Runs all operations.
-    pub fn run(&mut self, duration: Duration) -> Result<()> {
-        todo!()
+    pub fn run(&mut self, args: &Args) -> Result<()> {
+        let start = Instant::now();
+        let duration = Self::duration(&args);
+
+        match args {
+            Args { cell: true, .. } => loop {
+                Self::check_time(start, duration)?;
+                todo!()
+            },
+            Args { net: true, .. } => loop {
+                Self::check_time(start, duration)?;
+                todo!()
+            },
+            _ => Err(anyhow!("Do nothing.")),
+        }
     }
 
     /// Does a binary search in the given range [low, high)
