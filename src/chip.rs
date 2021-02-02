@@ -139,8 +139,8 @@ impl Chip {
         let keyword = parse_string(content)?;
         check_eq(keyword, "NumMasterCell")?;
         let num_master_cell: usize = parse_numeric(content)?;
-        // MasterCell <masterCellName> <pinCount> <blockageCount>
 
+        // MasterCell <masterCellName> <pinCount> <blockageCount>
         for idx in 0..num_master_cell {
             let keyword = parse_string(content)?;
             check_eq(keyword, "MasterCell")?;

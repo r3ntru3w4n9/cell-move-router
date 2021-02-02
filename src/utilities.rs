@@ -16,7 +16,7 @@ impl From<InputError> for Error {
 
 impl From<NameError> for Error {
     fn from(err: NameError) -> Self {
-        anyhow!(format!("Error: {:?}", err))
+        anyhow!(format!("NameError: {:?}", err))
     }
 }
 
