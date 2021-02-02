@@ -274,6 +274,7 @@ impl Chip {
         let mut pin_cell = Vec::new();
 
         let mut pin_count = 0;
+
         // CellInst <instName> <masterCellName> <gGridRowIdx> <gGridColIdx> <movableCstr>
         for idx in 0..cell_count {
             let keyword = parse_string(content)?;
@@ -329,6 +330,7 @@ impl Chip {
 
         let mut net_layers = Vec::with_capacity(net_count);
         let mut net_pins = Vec::with_capacity(net_count);
+
         // Net <netName> <numPins> <minRoutingLayConstraint>
         for idx in 0..net_count {
             let keyword = parse_string(content)?;
@@ -347,6 +349,7 @@ impl Chip {
             };
 
             let mut pins = Vec::with_capacity(num_pins);
+
             // Pin <instName>/<masterPinName>
             for _ in 0..num_pins {
                 let keyword = parse_string(content)?;
@@ -375,6 +378,7 @@ impl Chip {
             net_layers.push(min_layer);
             net_pins.push(pins);
         }
+
         // NumRoutes <routeSegmentCount>
         let keyword = parse_string(content)?;
         check_eq(keyword, "NumRoutes")?;
