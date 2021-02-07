@@ -1,10 +1,11 @@
-# cell-move-router
-A prototype Placement and Routing Incremental Movement Engine.
+# delayed-routing
 
-### Usage
-To run this project, you need `cargo`.
+## A routing method based on a computer graphics algorithm
 
+## Usage
+
+You need `go` to run this project.
 
 ---
 
-**Unfortunately, this project is now halted. Feel free to still modify it though.**
+## Todo
