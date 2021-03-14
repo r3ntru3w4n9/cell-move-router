@@ -10,7 +10,8 @@ import java.util.Iterator;
 import lombok.Getter;
 import lombok.Setter;
 
-// Parser is actually an interface, but with the benefit of having static methods
+// Parser is actually an interface, but with the benefit of having static
+// methods
 abstract public class Parser {
     @Getter
     @Setter
@@ -31,13 +32,16 @@ abstract public class Parser {
 
     protected void parseAndThrow(Path path) throws IOException {
         String content = Files.readString(path);
+
         String[] splitted = content.split("\\s+");
         var iterable = Arrays.asList(splitted);
+
         parse(iterable);
     }
 
     public void parse() {
         var list = Arrays.asList(data);
+
         parse(list);
     }
 
@@ -62,5 +66,4 @@ abstract public class Parser {
             throw new RuntimeException(nfe);
         }
     }
-
 }

@@ -17,6 +17,7 @@ public class IccadParser extends Parser {
     @Override
     protected void parse(Iterable<String> iterable) {
         var iterator = iterable.iterator();
+
         parse(iterator);
     }
 
@@ -31,6 +32,7 @@ public class IccadParser extends Parser {
 
         // GGridBoundaryIdx <rowBeginIdx> <colBeginIdx> <rowEndIdx> <colEndIdx>
         keyword = iterator.next();
+
         // start and end are both equal to 1
         assert keyword.equals("GGridBoundaryIdx");
         number = parseInt(iterator);
@@ -108,6 +110,7 @@ public class IccadParser extends Parser {
         // adjHGGrid <masterCellName1> <masterCellName2> <layerName> <demand>
         for (int i = 0; i < extraCount; ++i) {
             keyword = iterator.next();
+
             switch (keyword) {
                 case "sameGGrid":
                 case "adjHGGrid":
@@ -185,5 +188,4 @@ public class IccadParser extends Parser {
 
         assert !iterator.hasNext();
     }
-
 }
