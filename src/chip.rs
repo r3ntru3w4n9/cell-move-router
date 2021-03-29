@@ -2,14 +2,13 @@ use crate::{
     args::Args,
     components::{
         Blockage, Cell, CellType, Conflict, ConflictType, Direction, FactoryID, Layer, MasterCell,
-        MasterPin, Net, Pair, Point, Route,
+        MasterPin, Net, Pair, Route,
     },
     utilities,
 };
 use anyhow::{anyhow, Result};
 use rayon::prelude::*;
 use std::{
-    cmp::Ordering,
     collections::{HashMap, HashSet},
     fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
     fs,
@@ -40,9 +39,15 @@ impl Chip {
     /// Reads the content of a file into memory.
     /// This function reads the input file and stores it into `self`.
     pub fn read_file(&mut self, filename: &str) -> Result<()> {
+        let content: String = fs::read_to_string(filename)?;
+        self.read_str(&content)
+    }
+
+    /// Reads the content of a string into memory
+    /// This function reads the input string and stores it into `self`
+    pub fn read_str(&mut self, content: &str) -> Result<()> {
         use utilities::{check_eq, parse_numeric, parse_string};
 
-        let content = fs::read_to_string(filename)?;
         let content = &mut content.split_whitespace();
 
         // MaxCellMove <maxMoveCount>
@@ -315,13 +320,6 @@ impl Chip {
             });
         }
 
-        let pin_position = |pin_id: usize| -> Option<Pair<usize>> {
-            let idx = Self::binary_search(&pin_cell, pin_id, 0, pin_cell.len())?;
-            let cells = &self.cells;
-            let position = cells.get(idx)?.position;
-            Some(position)
-        };
-
         // NumNets <netCount>
         let keyword = parse_string(content)?;
         check_eq(keyword, "NumNets")?;
@@ -393,10 +391,7 @@ impl Chip {
             let net_name = parse_string(content)?;
             let net_id = Net::from_str(net_name)?;
 
-            let source = Point(srow, scol, slay);
-            let target = Point(erow, ecol, elay);
-
-            let route = Route(source, target);
+            let route = Route::raw(srow, scol, slay, erow, ecol, elay);
             routes
                 .get_mut(net_id)
                 .expect("Index out of bounds")
@@ -405,12 +400,7 @@ impl Chip {
 
         check_eq(routes.len(), net_count)?;
 
-        self.nets = (0..net_count, net_layers, net_pins, routes)
-            .into_par_iter()
-            .map(|(id, m_layer, conn_pins, segments)| {
-                Net::new(id, m_layer, conn_pins, segments, pin_position)
-            })
-            .collect();
+        // TODO: self.nets
 
         // parsing ends here
         check_eq(content.next(), None)?;
@@ -468,24 +458,6 @@ impl Chip {
                 todo!()
             },
             _ => Err(anyhow!("Do nothing.")),
-        }
-    }
-
-    /// Does a binary search in the given range [low, high)
-    fn binary_search(array: &[usize], target: usize, low: usize, high: usize) -> Option<usize> {
-        if low == high {
-            return Some(high);
-        }
-
-        debug_assert!(low < high);
-
-        let mid = (low + high) / 2;
-        let val = array.get(mid)?;
-
-        match target.cmp(val) {
-            Ordering::Less => Self::binary_search(array, target, low, mid),
-            Ordering::Equal => Some(mid + 1),
-            Ordering::Greater => Self::binary_search(array, target, mid + 1, high),
         }
     }
 

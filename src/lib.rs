@@ -6,4 +6,5 @@ mod utilities;
 
 pub use args::Args;
 pub use chip::Chip;
+pub use components::*;
 pub use utilities::UnionFind;

@@ -1,12 +1,10 @@
-use crate::utilities::UnionFind;
 use anyhow::{Error, Result};
-use arrayvec::ArrayVec;
 use num::Num;
 use std::{
     cmp,
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     fmt::{Display, Error as FmtError, Formatter, Result as FmtResult},
-    mem,
+    ops,
     str::FromStr,
     usize,
 };
@@ -22,16 +20,6 @@ pub trait FactoryID {
     /// The name of an instance is uniquely determined by its prefix and id
     fn prefix() -> &'static str;
 
-    /// Numeric operation converting from string.
-    fn from_str_op(num: usize) -> usize {
-        num - 1
-    }
-
-    /// Numeric operation converting from numeric values.
-    fn from_num_op(num: usize) -> usize {
-        num + 1
-    }
-
     /// Converts from &str to usize.
     fn from_str(name: &str) -> Result<usize>
     where
@@ -40,15 +28,16 @@ pub trait FactoryID {
         // subtracted by one because of the offset
         let length = Self::prefix().len();
 
-        let num = name[length..].parse::<usize>().map_err(Error::from)?;
-
-        Ok(Self::from_str_op(num))
+        let parsednum = name[length..].parse::<usize>().map_err(Error::from)?;
+        let id = parsednum - 1;
+        Ok(id)
     }
 
     /// Converts from usize to String.
     fn from_num(id: usize) -> Result<String> {
         // added by one because of the offset
-        Ok(format!("{}{}", Self::prefix(), Self::from_num_op(id)))
+        let strnum = id + 1;
+        Ok(format!("{}{}", Self::prefix(), strnum))
     }
 }
 
@@ -184,39 +173,35 @@ pub struct Pointer {
     height: usize,
 }
 
-/// A node in a tree.
+/// A node representing a position that's either an endpoint, an intersection, or a turningpoint.
 #[derive(Clone, Copy, Debug)]
-pub struct NetNode {
+pub struct PosNode {
     /// corresponding to pin id, None represents a virtual node.
     pub id: Option<usize>,
     /// positions
-    pub position: Pair<usize>,
-    /// nearby nodes
-    pub up: Option<Pointer>,
-    /// nearby nodes
-    pub down: Option<Pointer>,
-    /// nearby nodes
+    pub position: Point<usize>,
+    /// -x direction
     pub left: Option<Pointer>,
-    /// nearby nodes
+    /// +x direction
     pub right: Option<Pointer>,
-}
-
-/// Net represented as a tree.
-#[derive(Debug)]
-pub struct NetTree {
-    /// All nodes in a tree
-    nodes: Vec<NetNode>,
+    /// -y direction
+    pub down: Option<Pointer>,
+    /// +y direction
+    pub up: Option<Pointer>,
+    /// -z direction
+    pub bottom: Option<Pointer>,
+    /// +z direction
+    pub top: Option<Pointer>,
 }
 
 /// Some information about a Net.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct Net {
     /// id of the net
     pub id: usize,
     /// min layer id
     pub min_layer: usize,
-    /// Structure of the net represented as a tree
-    pub tree: NetTree,
+    // TODO: fields that backs the actual implementation
 }
 
 impl<T> Pair<T>
@@ -246,6 +231,10 @@ impl<T> Point<T>
 where
     T: Copy + Num,
 {
+    pub fn new(x: T, y: T, z: T) -> Self {
+        Self(x, y, z)
+    }
+
     pub fn row(&self) -> T {
         self.0
     }
@@ -268,6 +257,16 @@ impl<T> Route<T>
 where
     T: Copy + Num,
 {
+    pub fn new(a: Point<T>, b: Point<T>) -> Self {
+        Self(a, b)
+    }
+
+    pub fn raw(ax: T, ay: T, az: T, bx: T, by: T, bz: T) -> Self {
+        let pa = Point(ax, ay, az);
+        let pb = Point(bx, by, bz);
+        Self(pa, pb)
+    }
+
     pub fn source(&self) -> Point<T> {
         self.0
     }
@@ -387,9 +386,11 @@ where
     }
 }
 
-impl Towards {
+impl ops::Neg for Towards {
+    type Output = Self;
+
     /// Get the opposite direction.
-    pub fn inv(&self) -> Self {
+    fn neg(self) -> Self::Output {
         match self {
             Towards::Up => Towards::Down,
             Towards::Down => Towards::Up,
@@ -412,7 +413,7 @@ impl Display for Cell {
     }
 }
 
-impl NetNode {
+impl PosNode {
     /// List the neighboring nodes.
     pub fn neightbors(&self) -> [Option<Pointer>; 4] {
         [self.up, self.down, self.left, self.right]
@@ -442,355 +443,12 @@ impl NetNode {
     }
 }
 
-impl NetTree {
-    /// Creates a new Tree.
-    pub fn new<F>(conn_pins: Vec<usize>, segments: HashSet<Route<usize>>, pin_position: F) -> Self
-    where
-        F: Fn(usize) -> Option<Pair<usize>>,
-    {
-        // Converts a position pair into a global index (pin index).
-        // Using handcrafted `fold` first instead of direct using `collect` here
-        // to bypass implementation details of `collect`
-        let position_to_global = Self::positions(&conn_pins, &segments, pin_position);
-        let mut nodes: Vec<_> = position_to_global
-            .iter()
-            .map(|(&position, &id)| NetNode {
-                id,
-                position,
-                up: None,
-                down: None,
-                left: None,
-                right: None,
-            })
-            .collect();
-
-        let num_nodes = nodes.len();
-
-        // Converts a position pair into a local index (tree index).
-        let position_to_local: HashMap<_, _> = nodes
-            .iter()
-            .enumerate()
-            .map(|(idx, node)| (node.position, idx))
-            .collect();
-
-        // unique positions in this tree.
-        let unique_positions: HashSet<_> = nodes.iter().map(|node| node.position).collect();
-        debug_assert_eq!(unique_positions.len(), num_nodes);
-        debug_assert_eq!(position_to_local.len(), num_nodes);
-
-        let key_positions = position_to_local.iter().map(|(key, _)| *key).collect();
-        debug_assert_eq!(key_positions, unique_positions);
-
-        let mut union_find = UnionFind::new(num_nodes);
-        let mut uf_cnt = 0;
-
-        let atomic = Self::atomic_segments(segments, key_positions);
-
-        // Follows the same routine as in MST creation.
-        // Removes redundant nodes.
-        for route in atomic.into_iter() {
-            let towards = route.towards();
-            let Route(source, target) = route;
-
-            let height = source.lay();
-            debug_assert_eq!(height, target.lay());
-            match towards {
-                Towards::Up | Towards::Down | Towards::Left | Towards::Right => (),
-                Towards::Top | Towards::Bottom => unreachable!(),
-            }
-
-            let source_pos = source.flatten();
-            let target_pos = target.flatten();
-
-            let source_idx = *position_to_local.get(&source_pos).expect("Pair not found");
-            let target_idx = *position_to_local.get(&target_pos).expect("Pair not found");
-
-            if union_find.union(source_idx, target_idx) {
-                uf_cnt += 1;
-                Self::connect(&mut nodes, source_idx, target_idx, height, towards);
-            }
-        }
-
-        debug_assert!(union_find.done());
-        debug_assert_eq!(uf_cnt + 1, num_nodes);
-
-        Self { nodes }
-    }
-
-    /// Converts segments into atomic segments.
-    /// Atomic segments are segments who do not contain points other than thier end points.
-    fn atomic_segments(
-        segments: HashSet<Route<usize>>,
-        positions: HashSet<Pair<usize>>,
-    ) -> Vec<Route<usize>> {
-        // Groups pairs by their `rows` and `cols`, respectively
-        let (mut pos_by_row, mut pos_by_col) = positions.into_iter().fold(
-            (HashMap::new(), HashMap::new()),
-            |(mut by_row, mut by_col), pos| {
-                let Pair(row, col) = pos;
-                by_row.entry(row).or_insert_with(Vec::new).push(col);
-                by_col.entry(col).or_insert_with(Vec::new).push(row);
-                (by_row, by_col)
-            },
-        );
-
-        // Within the same group, sort the values (positions).
-        pos_by_row.iter_mut().for_each(|(_, vec)| vec.sort());
-        pos_by_col.iter_mut().for_each(|(_, vec)| vec.sort());
-
-        segments
-            .into_iter()
-            .filter(|route| match route.towards() {
-                Towards::Up | Towards::Down | Towards::Left | Towards::Right => true,
-                Towards::Top | Towards::Bottom => false,
-            })
-            .flat_map(|route| {
-                let (dir, pos) = match route.towards() {
-                    Towards::Left | Towards::Right => {
-                        let col = route.source().col();
-                        debug_assert_eq!(col, route.target().col());
-                        (
-                            Direction::Horizontal,
-                            pos_by_col.get(&col).expect("Position not found"),
-                        )
-                    }
-                    Towards::Up | Towards::Down => {
-                        let row = route.source().row();
-                        debug_assert_eq!(row, route.target().row());
-                        (
-                            Direction::Vertical,
-                            pos_by_row.get(&row).expect("Position not found"),
-                        )
-                    }
-                    Towards::Top | Towards::Bottom => unreachable!(),
-                };
-
-                Self::break_single_segment(route, pos, dir).into_iter()
-            })
-            .collect()
-    }
-
-    /// Breaks `route` by sorted `pos` with `dir` as direction
-    fn break_single_segment(
-        route: Route<usize>,
-        pos: &[usize],
-        dir: Direction,
-    ) -> Vec<Route<usize>> {
-        let (min, max);
-        let Route(mut source, mut target) = route;
-
-        debug_assert_eq!(source.lay(), target.lay());
-
-        // Assigns min, max to their relavant values.
-        // For a horizontal edge, only `x` positions are relavent.
-        // For a vertical edge, only `y` positions are relavent.
-        match dir {
-            Direction::Horizontal => {
-                debug_assert_eq!(source.col(), target.col());
-
-                if source.row() > target.row() {
-                    mem::swap(&mut source, &mut target);
-                }
-                min = source.row();
-                max = target.row();
-
-                match route.towards() {
-                    Towards::Left | Towards::Right => {}
-                    Towards::Up | Towards::Down | Towards::Top | Towards::Bottom => unreachable!(),
-                }
-            }
-            Direction::Vertical => {
-                debug_assert_eq!(source.row(), target.row());
-
-                if source.col() > target.col() {
-                    mem::swap(&mut source, &mut target);
-                }
-                min = source.col();
-                max = target.col();
-
-                match route.towards() {
-                    Towards::Up | Towards::Down => {}
-                    Towards::Left | Towards::Right | Towards::Top | Towards::Bottom => {
-                        unreachable!()
-                    }
-                }
-            }
-        }
-
-        debug_assert!(min < max);
-
-        // Discards irrelavent positions.
-        let filtered: Vec<_> = pos
-            .iter()
-            .filter(|elem| **elem >= min && **elem <= max)
-            .collect();
-
-        // Generates relavent pairs to put into `Route` objects.
-        let all_pairs = filtered.windows(2).map(|arr| match *arr {
-            [a, b] => (a, b),
-            _ => unreachable!(),
-        });
-
-        let Point(srow, scol, slay) = source;
-        let Point(trow, tcol, tlay) = target;
-
-        // Generates the final route. Puts "relavent pairs" into `Route` objects.
-        match dir {
-            Direction::Horizontal => {
-                debug_assert!(srow < trow);
-                all_pairs
-                    .map(|(s, t)| Route(Point(*s, scol, slay), Point(*t, tcol, tlay)))
-                    .collect()
-            }
-            Direction::Vertical => {
-                debug_assert!(scol < tcol);
-                all_pairs
-                    .map(|(s, t)| Route(Point(srow, *s, slay), Point(trow, *t, tlay)))
-                    .collect()
-            }
-        }
-    }
-
-    /// Connects two different nodes.
-    fn connect(nodes: &mut [NetNode], sindex: usize, oindex: usize, height: usize, diff: Towards) {
-        let mut set_node = |sindex: usize, oindex: usize, diff: Towards| {
-            let node: &mut NetNode = nodes.get_mut(sindex).expect("Node does not exist");
-            let some_ptr = Some(Pointer {
-                index: oindex,
-                height,
-            });
-
-            match diff {
-                Towards::Up => node.up = some_ptr,
-                Towards::Down => node.down = some_ptr,
-                Towards::Left => node.left = some_ptr,
-                Towards::Right => node.right = some_ptr,
-                Towards::Top | Towards::Bottom => unreachable!(),
-            }
-        };
-
-        debug_assert_ne!(sindex, oindex);
-
-        // Sets both nodes that are neightbors.
-        set_node(sindex, oindex, diff);
-        set_node(oindex, sindex, diff.inv());
-    }
-
-    /// Generates all nodes' positions
-    fn positions<F>(
-        conn_pins: &[usize],
-        segments: &HashSet<Route<usize>>,
-        pin_position: F,
-    ) -> HashMap<Pair<usize>, Option<usize>>
-    where
-        F: Fn(usize) -> Option<Pair<usize>>,
-    {
-        // Real pins are converted to positions.
-        let pins_iter = conn_pins
-            .iter()
-            .map(|&idx| (pin_position(idx), Some(idx)))
-            .map(|(pos, idx)| (pos.expect("Pin not stored"), idx));
-
-        // Endpoints in the segments are converted to positions.
-        // Records virtual points (id == None).
-        let segs_iter = segments
-            .iter()
-            .map(|Route(source, target)| [source, target])
-            .map(ArrayVec::from)
-            .map(ArrayVec::into_iter)
-            .flatten()
-            .map(|ref pt| pt.flatten())
-            .map(|pin| (pin, None));
-
-        // Merges and creates a final pin list.
-        segs_iter
-            .chain(pins_iter)
-            .fold(HashMap::new(), |mut hmap, (position, idx)| {
-                // prioritizes Some(index) over None
-                let entry = hmap.entry(position).or_insert(None);
-                if idx.is_some() {
-                    *entry = idx;
-                }
-                hmap
-            })
-    }
-}
-
-impl Net {
-    pub fn new<F>(
-        id: usize,
-        min_layer: usize,
-        conn_pins: Vec<usize>,
-        segments: HashSet<Route<usize>>,
-        pin_position: F,
-    ) -> Self
-    where
-        F: Fn(usize) -> Option<Pair<usize>>,
-    {
-        let tree = NetTree::new(conn_pins, segments, pin_position);
-        Self {
-            id,
-            min_layer,
-            tree,
-        }
-    }
-
-    /// Recursively explores nearby nodes. Converts the paths to strings in the process.
-    fn fmt_recursive(
-        &self,
-        f: &mut Formatter,
-        node: NetNode,
-        list: &[NetNode],
-        name: &str,
-        direction: Towards,
-    ) -> FmtResult {
-        let directions =
-            ArrayVec::from([Towards::Up, Towards::Down, Towards::Left, Towards::Right]);
-
-        for dir in directions.into_iter() {
-            if dir == direction.inv() {
-                continue;
-            }
-            let Pointer { index, height } = match node.index(dir) {
-                Some(idx) => idx,
-                None => continue,
-            };
-            let nearby_node = *list.get(index).expect("Index out of bounds");
-
-            let source = node.position.with(height);
-            let target = nearby_node.position.with(height);
-
-            writeln!(f, "{} {}", Route(source, target), name)?;
-
-            self.fmt_recursive(f, nearby_node, list, name, dir)?;
-        }
-
-        Ok(())
-    }
-}
+impl Net {}
 
 impl Display for Net {
     /// Converts `Net` to `String`
-    fn fmt(&self, f: &mut Formatter) -> FmtResult {
-        let name = &Self::from_num(self.id).map_err(|_| FmtError)?;
-
-        for node in self.tree.nodes.iter() {
-            let Pair(row, col) = node.position;
-            let (min, max) = node.span();
-            write!(f, "{} {} {} ", row, col, min)?;
-            write!(f, "{} {} {} ", row, col, max)?;
-            writeln!(f, "{}", name)?;
-        }
-
-        let directions =
-            ArrayVec::from([Towards::Up, Towards::Down, Towards::Left, Towards::Right]);
-        if let Some(&root) = self.tree.nodes.first() {
-            for dir in directions.into_iter() {
-                self.fmt_recursive(f, root, &self.tree.nodes, name, dir)?;
-            }
-        }
-
-        Ok(())
+    fn fmt(&self, _f: &mut Formatter) -> FmtResult {
+        unimplemented!()
     }
 }
 
