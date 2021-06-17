@@ -7,14 +7,12 @@ jobs:
       - name: 🔔 Check out
         uses: actions/checkout@v2
 
-
       # Rust part
       - name: 🏗️ Rust toolchain
         uses: actions-rs/toolchain@v1
         with:
           toolchain: stable
       - name: 🏃 cargo fmt
-        working-directory: ./rust
         run: cargo fmt
 
       # Add and commit all
