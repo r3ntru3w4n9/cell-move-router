@@ -1,0 +1,28 @@
+name: Format
+on: [push]
+jobs:
+  format-all:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 🔔 Check out
+        uses: actions/checkout@v2
+
+
+      # Rust part
+      - name: 🏗️ Rust toolchain
+        uses: actions-rs/toolchain@v1
+        with:
+          toolchain: stable
+      - name: 🏃 cargo fmt
+        working-directory: ./rust
+        run: cargo fmt
+
+      # Add and commit all
+      - name: ⬆️ Add and Commit
+        uses: EndBug/add-and-commit@v7
+        with:
+          author_name: "github-actions[bot]"
+          author_email: "github-actions[bot]@users.noreply.github.com"
+          message: "🤖 RenTrueWang thinks you forgot to format your code!"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
