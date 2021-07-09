@@ -446,7 +446,7 @@ impl Chip {
     /// Runs all operations.
     pub fn run(&mut self, args: &Args) -> Result<()> {
         let start = Instant::now();
-        let duration = Self::duration(&args);
+        let duration = Self::duration(args);
 
         match args {
             Args { cell: true, .. } => loop {
